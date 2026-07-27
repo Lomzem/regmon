@@ -358,6 +358,7 @@ export class BrowserMonitor {
 		});
 		void Effect.runPromiseExit(request).then((exit) => {
 			if (this.closed || connection !== this.connection) return;
+			let retryImmediately = false;
 			if (exit._tag === 'Success') {
 				this.patch({
 					previousSnapshot: this._view.snapshot,
@@ -366,14 +367,17 @@ export class BrowserMonitor {
 					polling: false
 				});
 			} else {
-				this.patch({ error: errorFromCause(exit.cause), polling: false });
+				const error = errorFromCause(exit.cause);
+				retryImmediately =
+					error?._tag === 'SerialReadError' && /framing error|buffer overrun/i.test(error.message);
+				this.patch({ error, polling: false });
 			}
 
 			if (this.refreshQueued) {
 				this.refreshQueued = false;
 				this.schedulePoll(0);
 			} else {
-				this.schedulePoll(this._view.intervalMs);
+				this.schedulePoll(retryImmediately ? 0 : this._view.intervalMs);
 			}
 		});
 	}
