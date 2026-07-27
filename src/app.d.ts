@@ -1,3 +1,5 @@
+/// <reference types="@types/w3c-web-serial" />
+
 // See https://svelte.dev/docs/kit/types#app.d.ts
 // for information about these interfaces
 declare global {
