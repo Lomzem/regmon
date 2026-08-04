@@ -1,8 +1,6 @@
 <script lang="ts">
 	import Binoculars from '@lucide/svelte/icons/binoculars';
 	import ListPlus from '@lucide/svelte/icons/list-plus';
-	import Replace from '@lucide/svelte/icons/replace';
-	import Search from '@lucide/svelte/icons/search';
 	import RawUartLog from '$lib/components/monitor/RawUartLog.svelte';
 	import { Badge } from '$lib/components/ui/badge';
 	import { Button } from '$lib/components/ui/button';
@@ -19,18 +17,6 @@
 	let activeTab = $state('all');
 	const addresses = Array.from({ length: 256 }, (_, address) => address);
 	const nibbles = Array.from({ length: 16 }, (_, nibble) => nibble.toString(16).toUpperCase());
-	let filteredWatchlist = $derived.by(() => {
-		const needle = view.filter.trim().toLowerCase();
-		if (!needle) return view.watchlist;
-		return view.watchlist.filter((address) => {
-			const register = view.registerMap?.registers.find(
-				(candidate) => candidate.address === address
-			);
-			return `${register?.name ?? ''} ${register?.displayName ?? ''} ${register?.description ?? ''}`
-				.toLowerCase()
-				.includes(needle);
-		});
-	});
 
 	function hex(value: number): string {
 		return value.toString(16).padStart(2, '0').toUpperCase();
@@ -40,7 +26,7 @@
 		monitor.dispatch({ type: 'select-address', address });
 	}
 
-	function applyExpression(mode: 'add' | 'replace'): void {
+	function applyExpression(): void {
 		const result = parseAddressExpression(expression);
 		if (!result.ok) {
 			expressionError = `${result.error.message} (column ${result.error.position + 1})`;
@@ -49,7 +35,7 @@
 		expressionError = '';
 		monitor.dispatch({
 			type: 'set-watchlist',
-			addresses: mode === 'replace' ? result.addresses : [...view.watchlist, ...result.addresses]
+			addresses: [...view.watchlist, ...result.addresses]
 		});
 	}
 </script>
@@ -124,10 +110,10 @@
 
 			<TabsContent value="watchlist" class="space-y-4">
 				<form
-					class="grid gap-2 lg:grid-cols-[1fr_auto_auto]"
+					class="grid gap-2 lg:grid-cols-[1fr_auto]"
 					onsubmit={(event) => {
 						event.preventDefault();
-						applyExpression('add');
+						applyExpression();
 					}}
 				>
 					<div>
@@ -140,40 +126,20 @@
 						/>
 					</div>
 					<Button type="submit" variant="outline"><ListPlus /> Add</Button>
-					<Button type="button" variant="outline" onclick={() => applyExpression('replace')}
-						><Replace /> Replace</Button
-					>
 				</form>
 				{#if expressionError}<p class="text-xs text-destructive" role="alert">
 						{expressionError}
 					</p>{/if}
 
-				<div class="relative">
-					<Search
-						class="pointer-events-none absolute top-1/2 left-2.5 size-4 -translate-y-1/2 text-muted-foreground"
-					/>
-					<label for="metadata-filter" class="sr-only">Filter watchlist by register metadata</label>
-					<Input
-						id="metadata-filter"
-						class="pl-9"
-						value={view.filter}
-						oninput={(event) =>
-							monitor.dispatch({ type: 'set-filter', filter: event.currentTarget.value })}
-						placeholder="Filter by register name or description"
-					/>
-				</div>
-
-				{#if filteredWatchlist.length === 0}
+				{#if view.watchlist.length === 0}
 					<div
 						class="rounded-lg border border-dashed p-8 text-center text-sm text-muted-foreground"
 					>
-						{view.watchlist.length === 0
-							? 'No watched addresses. Add an expression or click cells in the matrix.'
-							: 'No watched register matches the metadata filter.'}
+						No watched addresses. Add an address above or use the register dialog.
 					</div>
 				{:else}
 					<div class="grid gap-2 sm:grid-cols-2 xl:grid-cols-4">
-						{#each filteredWatchlist as address (address)}
+						{#each view.watchlist as address (address)}
 							{@const register = view.registerMap?.registers.find(
 								(candidate) => candidate.address === address
 							)}
