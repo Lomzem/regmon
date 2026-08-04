@@ -1,22 +1,51 @@
 <script lang="ts">
 	import Binoculars from '@lucide/svelte/icons/binoculars';
-	import ListPlus from '@lucide/svelte/icons/list-plus';
+	import ChevronsUpDown from '@lucide/svelte/icons/chevrons-up-down';
+	import X from '@lucide/svelte/icons/x';
 	import RawUartLog from '$lib/components/monitor/RawUartLog.svelte';
 	import { Badge } from '$lib/components/ui/badge';
 	import { Button } from '$lib/components/ui/button';
 	import { Card, CardContent } from '$lib/components/ui/card';
-	import { Input } from '$lib/components/ui/input';
+	import {
+		Command,
+		CommandEmpty,
+		CommandInput,
+		CommandItem,
+		CommandList
+	} from '$lib/components/ui/command';
+	import { Popover, PopoverContent, PopoverTrigger } from '$lib/components/ui/popover';
 	import { Tabs, TabsContent, TabsList, TabsTrigger } from '$lib/components/ui/tabs';
 	import { getMonitorContext } from '$lib/monitor/context';
-	import { parseAddressExpression } from '$lib/registers/filter';
 
 	const monitor = getMonitorContext();
 	let view = $derived(monitor.view);
-	let expression = $state('');
-	let expressionError = $state('');
+	let watchSearchOpen = $state(false);
+	let watchSearch = $state('');
 	let activeTab = $state('all');
 	const addresses = Array.from({ length: 256 }, (_, address) => address);
 	const nibbles = Array.from({ length: 16 }, (_, nibble) => nibble.toString(16).toUpperCase());
+	let watchOptions = $derived(
+		addresses.map((address) => {
+			const register = view.registerMap?.registers.find((candidate) => candidate.address === address);
+			const fields = register?.fields
+				.flatMap((field) => [field.name, field.displayName, field.description])
+				.filter(Boolean)
+				.join(' ');
+			return {
+				address,
+				label: register?.displayName ?? register?.name ?? 'Unmapped register',
+				fields: register?.fields.map((field) => field.displayName ?? field.name).join(', ') ?? '',
+				search:
+					`0x${hex(address)} ${hex(address)} ${address} ${register?.name ?? ''} ${register?.displayName ?? ''} ${register?.description ?? ''} ${fields ?? ''}`.toLowerCase()
+			};
+		})
+	);
+	let visibleWatchOptions = $derived.by(() => {
+		const needle = watchSearch.trim().toLowerCase();
+		return watchOptions
+			.filter((option) => !needle || option.search.includes(needle))
+			.slice(0, 32);
+	});
 
 	function hex(value: number): string {
 		return value.toString(16).padStart(2, '0').toUpperCase();
@@ -26,17 +55,20 @@
 		monitor.dispatch({ type: 'select-address', address });
 	}
 
-	function applyExpression(): void {
-		const result = parseAddressExpression(expression);
-		if (!result.ok) {
-			expressionError = `${result.error.message} (column ${result.error.position + 1})`;
-			return;
-		}
-		expressionError = '';
+	function removeFromWatchlist(address: number): void {
 		monitor.dispatch({
 			type: 'set-watchlist',
-			addresses: [...view.watchlist, ...result.addresses]
+			addresses: view.watchlist.filter((candidate) => candidate !== address)
 		});
+	}
+
+	function addToWatchlist(address: number): void {
+		monitor.dispatch({
+			type: 'set-watchlist',
+			addresses: [...view.watchlist, address]
+		});
+		watchSearch = '';
+		watchSearchOpen = false;
 	}
 </script>
 
@@ -109,33 +141,53 @@
 			</TabsContent>
 
 			<TabsContent value="watchlist" class="space-y-4">
-				<form
-					class="grid gap-2 lg:grid-cols-[1fr_auto]"
-					onsubmit={(event) => {
-						event.preventDefault();
-						applyExpression();
-					}}
-				>
-					<div>
-						<label for="watch-expression" class="sr-only">Address expression</label>
-						<Input
-							id="watch-expression"
-							bind:value={expression}
-							placeholder="Addresses: 00, 10-1F, 0x80"
-							aria-invalid={expressionError ? 'true' : undefined}
-						/>
-					</div>
-					<Button type="submit" variant="outline"><ListPlus /> Add</Button>
-				</form>
-				{#if expressionError}<p class="text-xs text-destructive" role="alert">
-						{expressionError}
-					</p>{/if}
+				<Popover bind:open={watchSearchOpen}>
+					<PopoverTrigger>
+						{#snippet child({ props })}
+							<Button
+								{...props}
+								class="w-full justify-between font-normal text-muted-foreground"
+								variant="outline"
+								role="combobox"
+								aria-expanded={watchSearchOpen}
+							>
+								Find a register, field, or address
+								<ChevronsUpDown class="opacity-50" />
+							</Button>
+						{/snippet}
+					</PopoverTrigger>
+					<PopoverContent class="w-[var(--bits-popover-anchor-width)] p-0" align="start">
+						<Command shouldFilter={false}>
+							<CommandInput bind:value={watchSearch} placeholder="Search registers and fields" />
+							<CommandList class="max-h-72">
+								<CommandEmpty>No matching register.</CommandEmpty>
+								{#each visibleWatchOptions as option (option.address)}
+									<CommandItem
+										value={option.search}
+										onSelect={() => addToWatchlist(option.address)}
+									>
+										<span class="w-10 shrink-0 font-mono text-xs text-primary"
+											>0x{hex(option.address)}</span
+										>
+										<span class="min-w-0">
+											<span class="block truncate">{option.label}</span>
+											{#if option.fields}<span
+													class="block truncate text-xs text-muted-foreground"
+													>{option.fields}</span
+												>{/if}
+										</span>
+									</CommandItem>
+								{/each}
+							</CommandList>
+						</Command>
+					</PopoverContent>
+				</Popover>
 
 				{#if view.watchlist.length === 0}
 					<div
 						class="rounded-lg border border-dashed p-8 text-center text-sm text-muted-foreground"
 					>
-						No watched addresses. Add an address above or use the register dialog.
+						No watched addresses.
 					</div>
 				{:else}
 					<div class="grid gap-2 sm:grid-cols-2 xl:grid-cols-4">
@@ -144,20 +196,32 @@
 								(candidate) => candidate.address === address
 							)}
 							{@const value = view.snapshot?.[address] ?? 0}
-							<button
-								type="button"
-								class="flex items-center justify-between rounded-lg border bg-muted/50 p-3 text-left transition-colors hover:border-primary/60 hover:bg-primary/10 focus-visible:ring-2 focus-visible:ring-primary focus-visible:outline-none"
-								onclick={() => inspectAddress(address)}
-								aria-label={`Inspect register 0x${hex(address)}`}
-							>
-								<span class="min-w-0">
-									<span class="block font-mono text-xs text-primary">0x{hex(address)}</span>
-									<span class="block truncate text-xs text-muted-foreground"
-										>{register?.displayName ?? register?.name ?? 'Unmapped register'}</span
-									>
-								</span>
-								<span class="font-mono text-lg">{hex(value)}</span>
-							</button>
+							<div class="group relative">
+								<button
+									type="button"
+									class="flex w-full items-center justify-between rounded-lg border bg-muted/50 p-3 pr-10 text-left transition-colors hover:border-primary/60 hover:bg-primary/10 focus-visible:ring-2 focus-visible:ring-primary focus-visible:outline-none"
+									onclick={() => inspectAddress(address)}
+									aria-label={`Inspect register 0x${hex(address)}`}
+								>
+									<span class="min-w-0">
+										<span class="block font-mono text-xs text-primary">0x{hex(address)}</span>
+										<span class="block truncate text-xs text-muted-foreground"
+											>{register?.displayName ?? register?.name ?? 'Unmapped register'}</span
+										>
+									</span>
+									<span class="font-mono text-lg">{hex(value)}</span>
+								</button>
+								<Button
+									class="absolute top-1.5 right-1.5 opacity-0 group-hover:opacity-100 focus:opacity-100"
+									variant="ghost"
+									size="icon-xs"
+									onclick={() => removeFromWatchlist(address)}
+									aria-label={`Remove register 0x${hex(address)} from watchlist`}
+									title="Remove from Watchlist"
+								>
+									<X />
+								</Button>
+							</div>
 						{/each}
 					</div>
 				{/if}
