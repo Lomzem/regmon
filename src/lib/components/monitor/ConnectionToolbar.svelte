@@ -175,9 +175,10 @@
 		<Alert variant="destructive">
 			<AlertTriangle />
 			<AlertTitle>Web Serial unavailable</AlertTitle>
-			<AlertDescription
-				>Use a browser with Web Serial support on a secure origin to connect hardware.</AlertDescription
-			>
+			<AlertDescription>
+				<span class="block">Web Serial may be unavailable because of browser settings or policy.</span>
+				<span class="block">For best compatibility, use a Chromium-based browser.</span>
+			</AlertDescription>
 		</Alert>
 	</div>
 {:else if view.error}
