@@ -88,7 +88,11 @@
 			</Button>
 			<div class="w-28">
 				{#if view.status === 'connected'}
-					<Button variant="destructive" onclick={() => monitor.dispatch({ type: 'disconnect' })}>
+					<Button
+						class="text-muted-foreground hover:text-foreground"
+						variant="outline"
+						onclick={() => monitor.dispatch({ type: 'disconnect' })}
+					>
 						<CircleStop /> Disconnect
 					</Button>
 				{:else}
