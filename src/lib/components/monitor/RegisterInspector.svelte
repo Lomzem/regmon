@@ -33,10 +33,10 @@
 		if (!open) monitor.dispatch({ type: 'select-address', address: null });
 	}}
 >
-	<SheetContent class="w-full overflow-y-auto border-zinc-800 bg-zinc-950 sm:max-w-lg">
-		<SheetHeader class="border-b border-zinc-800 pb-4">
-			<SheetTitle class="flex items-center gap-2 font-mono">
-				<Binary class="text-cyan-400" /> Register {address === null ? '--' : `0x${hex(address)}`}
+	<SheetContent class="w-full overflow-y-auto bg-card sm:max-w-lg">
+		<SheetHeader class="border-b pb-4">
+			<SheetTitle class="flex items-center gap-2 font-serif">
+				<Binary class="text-primary" /> Register {address === null ? '--' : `0x${hex(address)}`}
 			</SheetTitle>
 			<SheetDescription
 				>{decoded?.register.displayName ??
@@ -47,16 +47,16 @@
 
 		<div class="space-y-5 px-4 pb-6">
 			<div class="grid grid-cols-3 gap-2">
-				<div class="rounded-lg border border-zinc-800 bg-zinc-900/50 p-3">
-					<p class="text-[10px] tracking-wider text-zinc-500 uppercase">Hex</p>
-					<p class="mt-1 font-mono text-xl text-cyan-300">0x{hex(value)}</p>
+				<div class="rounded-lg border bg-muted/50 p-3">
+					<p class="text-[10px] tracking-wider text-muted-foreground uppercase">Hex</p>
+					<p class="mt-1 font-mono text-xl text-primary">0x{hex(value)}</p>
 				</div>
-				<div class="rounded-lg border border-zinc-800 bg-zinc-900/50 p-3">
-					<p class="text-[10px] tracking-wider text-zinc-500 uppercase">Decimal</p>
+				<div class="rounded-lg border bg-muted/50 p-3">
+					<p class="text-[10px] tracking-wider text-muted-foreground uppercase">Decimal</p>
 					<p class="mt-1 font-mono text-xl">{value}</p>
 				</div>
-				<div class="rounded-lg border border-zinc-800 bg-zinc-900/50 p-3">
-					<p class="text-[10px] tracking-wider text-zinc-500 uppercase">Binary</p>
+				<div class="rounded-lg border bg-muted/50 p-3">
+					<p class="text-[10px] tracking-wider text-muted-foreground uppercase">Binary</p>
 					<p class="mt-1 font-mono text-xs leading-7">{value.toString(2).padStart(8, '0')}</p>
 				</div>
 			</div>
@@ -72,43 +72,49 @@
 								>reset 0x{hex(decoded.register.reset)}</Badge
 							>{/if}
 					</div>
-					{#if decoded.register.description}<p class="text-sm leading-relaxed text-zinc-400">
+					{#if decoded.register.description}<p
+							class="text-sm leading-relaxed text-muted-foreground"
+						>
 							{decoded.register.description}
 						</p>{/if}
 				</div>
-				<Separator class="bg-zinc-800" />
+				<Separator />
 				<div class="space-y-2">
-					<h3 class="font-mono text-xs tracking-wider text-zinc-500 uppercase">Decoded fields</h3>
+					<h3 class="font-mono text-xs tracking-wider text-muted-foreground uppercase">
+						Decoded fields
+					</h3>
 					{#each decoded.fields as field (field.field.name)}
-						<div class="rounded-lg border border-zinc-800 bg-zinc-900/40 p-3">
+						<div class="rounded-lg border bg-muted/40 p-3">
 							<div class="flex items-start justify-between gap-3">
 								<div class="min-w-0">
-									<p class="font-mono text-sm text-zinc-100">
+									<p class="font-mono text-sm text-foreground">
 										{field.field.displayName ?? field.field.name}
 									</p>
-									<p class="text-[11px] text-zinc-500">
+									<p class="text-[11px] text-muted-foreground">
 										bits {field.field.highBit}:{field.field.lowBit}{field.field.softwareAccess
 											? ` · ${field.field.softwareAccess}`
 											: ''}
 									</p>
 								</div>
 								<div class="text-right">
-									<p class="font-mono text-cyan-300">{field.value}</p>
-									{#if field.enumValue}<p class="text-xs text-emerald-400">
+									<p class="font-mono text-primary">{field.value}</p>
+									{#if field.enumValue}<p class="text-xs text-chart-3">
 											{field.enumValue.displayName ?? field.enumValue.name}
 										</p>{/if}
 								</div>
 							</div>
-							{#if field.field.description}<p class="mt-2 text-xs leading-relaxed text-zinc-500">
+							{#if field.field.description}<p
+									class="mt-2 text-xs leading-relaxed text-muted-foreground"
+								>
 									{field.field.description}
 								</p>{/if}
 						</div>
 					{:else}
-						<p class="text-sm text-zinc-500">No fields are defined for this register.</p>
+						<p class="text-sm text-muted-foreground">No fields are defined for this register.</p>
 					{/each}
 				</div>
 			{:else}
-				<div class="rounded-lg border border-dashed border-zinc-800 p-5 text-sm text-zinc-500">
+				<div class="rounded-lg border border-dashed p-5 text-sm text-muted-foreground">
 					Load a SystemRDL file to decode this address.
 				</div>
 			{/if}

@@ -4,11 +4,12 @@
 	import Plug from '@lucide/svelte/icons/plug';
 	import Plus from '@lucide/svelte/icons/plus';
 	import RefreshCw from '@lucide/svelte/icons/refresh-cw';
+	import Trash2 from '@lucide/svelte/icons/trash-2';
+	import Upload from '@lucide/svelte/icons/upload';
 	import { Alert, AlertDescription, AlertTitle } from '$lib/components/ui/alert';
-	import { Badge } from '$lib/components/ui/badge';
 	import { Button } from '$lib/components/ui/button';
 	import { Card, CardContent } from '$lib/components/ui/card';
-	import { NativeSelect, NativeSelectOption } from '$lib/components/ui/native-select';
+	import { Select, SelectContent, SelectItem, SelectTrigger } from '$lib/components/ui/select';
 	import { Switch } from '$lib/components/ui/switch';
 	import { getMonitorContext } from '$lib/monitor/context';
 
@@ -18,6 +19,8 @@
 		view.ports.findIndex((candidate) => candidate.port === view.selectedPort)
 	);
 	const intervals = [250, 500, 1000, 2000, 5000] as const;
+	let fileInput = $state<HTMLInputElement | null>(null);
+	let fileName = $state('');
 
 	function portLabel(index: number): string {
 		const info = view.ports[index].info;
@@ -30,8 +33,8 @@
 				: `Authorized serial device ${index + 1}`;
 	}
 
-	function selectPort(event: Event): void {
-		const index = Number((event.currentTarget as HTMLSelectElement).value);
+	function selectPort(value: string): void {
+		const index = Number(value);
 		monitor.dispatch({ type: 'select-port', port: view.ports[index]?.port ?? null });
 	}
 
@@ -42,117 +45,119 @@
 		}
 		return view.error.message;
 	}
+
+	async function loadFile(event: Event): Promise<void> {
+		const input = event.currentTarget as HTMLInputElement;
+		const file = input.files?.[0];
+		if (!file) return;
+		fileName = file.name;
+		monitor.dispatch({ type: 'set-rdl-source', source: await file.text() });
+		input.value = '';
+	}
+
+	function forgetRdl(): void {
+		monitor.dispatch({ type: 'clear-rdl' });
+		fileName = '';
+		if (fileInput) fileInput.value = '';
+	}
 </script>
 
-<Card class="border-zinc-800 bg-zinc-950/75 shadow-xl shadow-black/10">
+<Card class="py-0">
 	<CardContent class="space-y-4 p-4">
-		<div class="flex flex-col gap-3 xl:flex-row xl:items-center xl:justify-between">
-			<div class="flex min-w-0 flex-1 flex-wrap items-center gap-2">
-				<div class="min-w-56 flex-1 sm:max-w-sm">
-					<label for="serial-port" class="sr-only">Authorized serial port</label>
-					<NativeSelect
-						id="serial-port"
-						class="w-full"
-						value={selectedIndex < 0 ? '' : String(selectedIndex)}
-						onchange={selectPort}
-						disabled={view.status === 'unsupported' || view.status === 'connected'}
-					>
-						<NativeSelectOption value="" disabled>No authorized device</NativeSelectOption>
-						{#each view.ports, index (index)}
-							<NativeSelectOption value={String(index)}>{portLabel(index)}</NativeSelectOption>
-						{/each}
-					</NativeSelect>
-				</div>
-				<Button
-					variant="outline"
-					onclick={() => monitor.dispatch({ type: 'choose-port' })}
+		<div class="flex min-w-0 flex-wrap items-center gap-2">
+			<div class="w-full sm:w-80">
+				<Select
+					type="single"
+					value={selectedIndex < 0 ? '' : String(selectedIndex)}
+					onValueChange={selectPort}
 					disabled={view.status === 'unsupported' || view.status === 'connected'}
 				>
-					<Plus /> Add device
-				</Button>
-				{#if view.status === 'connected'}
-					<Button variant="destructive" onclick={() => monitor.dispatch({ type: 'disconnect' })}>
-						<CircleStop /> Disconnect
-					</Button>
-				{:else}
-					<Button
-						onclick={() => monitor.dispatch({ type: 'connect' })}
-						disabled={!view.selectedPort || view.status === 'connecting'}
-					>
-						<Plug />
-						{view.status === 'connecting' ? 'Connecting…' : 'Connect'}
-					</Button>
-				{/if}
-				<Badge variant="outline" class="font-mono text-[10px] tracking-wider">115200 8N1</Badge>
-				<Badge
-					variant={view.status === 'connected'
-						? 'default'
-						: view.status === 'unsupported'
-							? 'destructive'
-							: 'secondary'}
-					class="capitalize"
-				>
-					<span
-						class={[
-							'size-1.5 rounded-full',
-							view.status === 'connected' ? 'bg-emerald-300' : 'bg-current'
-						]}
-						aria-hidden="true"
-					></span>
-					{view.status}
-				</Badge>
+					<SelectTrigger class="w-full" aria-label="Authorized serial port">
+						{selectedIndex < 0 ? 'Select device' : portLabel(selectedIndex)}
+					</SelectTrigger>
+					<SelectContent>
+						{#each view.ports, index (index)}
+							<SelectItem value={String(index)}>{portLabel(index)}</SelectItem>
+						{/each}
+					</SelectContent>
+				</Select>
 			</div>
-
-			<div
-				class="flex flex-wrap items-center gap-2 border-t border-zinc-800 pt-3 xl:border-t-0 xl:pt-0"
+			<Button
+				variant="outline"
+				onclick={() => monitor.dispatch({ type: 'choose-port' })}
+				disabled={view.status === 'unsupported' || view.status === 'connected'}
 			>
-				<label for="poll-live" class="text-xs font-medium text-zinc-400">Live polling</label>
-				<Switch
-					id="poll-live"
-					checked={!view.paused}
-					onCheckedChange={(checked) => monitor.dispatch({ type: 'set-paused', paused: !checked })}
-					disabled={view.status !== 'connected'}
-				/>
-				<label for="poll-interval" class="sr-only">Polling interval</label>
-				<NativeSelect
-					id="poll-interval"
-					size="sm"
-					value={String(view.intervalMs)}
-					onchange={(event) =>
-						monitor.dispatch({
-							type: 'set-interval',
-							intervalMs: Number((event.currentTarget as HTMLSelectElement).value)
-						})}
-				>
-					{#each intervals as interval (interval)}
-						<NativeSelectOption value={String(interval)}>{interval} ms</NativeSelectOption>
-					{/each}
-				</NativeSelect>
-				<Button
-					variant="outline"
-					size="sm"
-					onclick={() => monitor.dispatch({ type: 'refresh' })}
-					disabled={view.status !== 'connected'}
-				>
-					<RefreshCw class={view.polling ? 'animate-spin' : ''} /> Refresh
+				<Plus /> Add device
+			</Button>
+			{#if view.status === 'connected'}
+				<Button variant="destructive" onclick={() => monitor.dispatch({ type: 'disconnect' })}>
+					<CircleStop /> Disconnect
 				</Button>
-			</div>
+			{:else}
+				<Button
+					onclick={() => monitor.dispatch({ type: 'connect' })}
+					disabled={!view.selectedPort || view.status === 'connecting'}
+				>
+					<Plug />
+					{view.status === 'connecting' ? 'Connecting…' : 'Connect'}
+				</Button>
+			{/if}
+			<label for="poll-live" class="text-xs font-medium text-muted-foreground lg:ml-auto"
+				>Live polling</label
+			>
+			<Switch
+				id="poll-live"
+				checked={!view.paused}
+				onCheckedChange={(checked) => monitor.dispatch({ type: 'set-paused', paused: !checked })}
+				disabled={view.status !== 'connected'}
+			/>
+			<Select
+				type="single"
+				value={String(view.intervalMs)}
+				onValueChange={(value) =>
+					monitor.dispatch({
+						type: 'set-interval',
+						intervalMs: Number(value)
+					})}
+			>
+				<SelectTrigger class="w-24" size="sm" aria-label="Polling interval"
+					>{view.intervalMs} ms</SelectTrigger
+				>
+				<SelectContent>
+					{#each intervals as interval (interval)}
+						<SelectItem value={String(interval)}>{interval} ms</SelectItem>
+					{/each}
+				</SelectContent>
+			</Select>
+			<Button
+				variant="outline"
+				size="sm"
+				onclick={() => monitor.dispatch({ type: 'refresh' })}
+				disabled={view.status !== 'connected'}
+			>
+				<RefreshCw class={view.polling ? 'animate-spin' : ''} /> Refresh
+			</Button>
 		</div>
 
-		<div
-			class="flex min-h-5 flex-wrap items-center gap-x-4 gap-y-1 font-mono text-[11px] text-zinc-500"
-			aria-live="polite"
-			aria-atomic="true"
-		>
-			<span
-				>{view.polling
-					? 'RX: waiting for 256-byte snapshot'
-					: view.paused
-						? 'POLL: paused'
-						: 'POLL: armed'}</span
-			>
-			<span>LAST: {view.snapshotAt ? new Date(view.snapshotAt).toLocaleTimeString() : 'never'}</span
-			>
+		<div class="flex min-w-0 flex-col gap-3 sm:flex-row sm:items-center">
+			<input
+				id="rdl-file"
+				bind:this={fileInput}
+				class="sr-only"
+				type="file"
+				accept=".rdl,.systemrdl,text/plain"
+				onchange={loadFile}
+			/>
+			<Button variant="outline" onclick={() => fileInput?.click()}>
+				<Upload /> Choose .rdl file
+			</Button>
+			{#if fileName}<span class="truncate text-xs text-muted-foreground">{fileName}</span>{/if}
+			{#if view.registerMap}
+				<span class="text-xs text-muted-foreground">
+					{view.registerMap.registers.length} registers
+				</span>
+				<Button variant="ghost" size="sm" onclick={forgetRdl}><Trash2 /> Forget</Button>
+			{/if}
 		</div>
 
 		{#if view.status === 'unsupported'}
