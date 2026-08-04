@@ -1,6 +1,8 @@
 <script lang="ts">
 	import Binary from '@lucide/svelte/icons/binary';
 	import { Badge } from '$lib/components/ui/badge';
+	import { Button } from '$lib/components/ui/button';
+	import { ButtonGroup } from '$lib/components/ui/button-group';
 	import { Separator } from '$lib/components/ui/separator';
 	import {
 		Sheet,
@@ -13,9 +15,11 @@
 	import { decodeRegisterMap } from '$lib/rdl/decode';
 
 	const monitor = getMonitorContext();
+	const baseLabels = { hex: 'Hex', decimal: 'Decimal', binary: 'Binary' } as const;
 	let view = $derived(monitor.view);
 	let address = $derived(view.selectedAddress);
 	let value = $derived(address === null ? 0 : (view.snapshot?.[address] ?? 0));
+	let base = $state<'hex' | 'decimal' | 'binary'>('hex');
 	let decoded = $derived(
 		address === null || !view.registerMap
 			? undefined
@@ -24,6 +28,12 @@
 
 	function hex(byte: number): string {
 		return byte.toString(16).padStart(2, '0').toUpperCase();
+	}
+
+	function formattedValue(): string {
+		if (base === 'decimal') return String(value);
+		if (base === 'binary') return value.toString(2).padStart(8, '0');
+		return `0x${hex(value)}`;
 	}
 </script>
 
@@ -46,19 +56,22 @@
 		</SheetHeader>
 
 		<div class="space-y-5 px-4 pb-6">
-			<div class="grid grid-cols-3 gap-2">
-				<div class="rounded-lg border bg-muted/50 p-3">
-					<p class="text-[10px] tracking-wider text-muted-foreground uppercase">Hex</p>
-					<p class="mt-1 font-mono text-xl text-primary">0x{hex(value)}</p>
+			<div class="flex items-center justify-between gap-4 rounded-lg border bg-muted/50 p-3">
+				<div class="min-w-0">
+					<p class="text-[10px] tracking-wider text-muted-foreground">{baseLabels[base]}</p>
+					<p class="mt-1 font-mono text-xl text-primary">{formattedValue()}</p>
 				</div>
-				<div class="rounded-lg border bg-muted/50 p-3">
-					<p class="text-[10px] tracking-wider text-muted-foreground uppercase">Decimal</p>
-					<p class="mt-1 font-mono text-xl">{value}</p>
-				</div>
-				<div class="rounded-lg border bg-muted/50 p-3">
-					<p class="text-[10px] tracking-wider text-muted-foreground uppercase">Binary</p>
-					<p class="mt-1 font-mono text-xs leading-7">{value.toString(2).padStart(8, '0')}</p>
-				</div>
+				<ButtonGroup aria-label="Register value base">
+					{#each Object.entries(baseLabels) as [option, label] (option)}
+						<Button
+							class="text-[11px]"
+							size="sm"
+							variant={base === option ? 'secondary' : 'outline'}
+							onclick={() => (base = option as typeof base)}
+							aria-pressed={base === option}>{label}</Button
+						>
+					{/each}
+				</ButtonGroup>
 			</div>
 
 			{#if decoded}
@@ -80,8 +93,8 @@
 				</div>
 				<Separator />
 				<div class="space-y-2">
-					<h3 class="font-mono text-xs tracking-wider text-muted-foreground uppercase">
-						Decoded fields
+					<h3 class="font-mono text-xs tracking-wider text-muted-foreground">
+						Decoded Fields
 					</h3>
 					{#each decoded.fields as field (field.field.name)}
 						<div class="rounded-lg border bg-muted/40 p-3">

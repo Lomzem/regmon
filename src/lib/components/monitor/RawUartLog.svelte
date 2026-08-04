@@ -26,8 +26,8 @@
 		<CardHeader class="p-4">
 			<div class="flex items-start justify-between gap-3">
 				<div>
-					<CardTitle class="font-serif text-sm font-semibold tracking-wider uppercase"
-						>Raw UART log</CardTitle
+					<CardTitle class="font-serif text-sm font-semibold tracking-wider"
+						>Raw UART Log</CardTitle
 					>
 					<CardDescription
 						>Bounded tail of received text, {view.rawLog.length.toLocaleString()} chars</CardDescription

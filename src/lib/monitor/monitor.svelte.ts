@@ -1,6 +1,8 @@
 import { Cause, Effect, Either, Fiber } from 'effect';
+import mockOutput from '../../../examples/example_output.txt?raw';
 import { parseSystemRdl } from '$lib/rdl/parser';
 import type { RdlError, RegisterMap } from '$lib/rdl/types';
+import { RegisterDumpAssembler } from '$lib/registers/dump';
 import type { RegisterSnapshot } from '$lib/registers/types';
 import {
 	choosePort,
@@ -127,6 +129,7 @@ export class BrowserMonitor {
 
 		this.serial = 'serial' in navigator ? navigator.serial : undefined;
 		this.storage = window.localStorage;
+		if (import.meta.env.DEV) this.loadDevelopmentFixture();
 
 		if (!this.serial) {
 			this.patch({ status: 'unsupported' });
@@ -209,6 +212,17 @@ export class BrowserMonitor {
 
 	private patch(patch: Partial<MonitorView>): void {
 		this._view = immutableView({ ...this._view, ...patch });
+	}
+
+	private loadDevelopmentFixture(): void {
+		const assembler = new RegisterDumpAssembler();
+		const snapshot = assembler.push(`${mockOutput}\n`)[0];
+		if (!snapshot) return;
+		this.patch({
+			snapshot,
+			snapshotAt: Date.now(),
+			rawLog: this.rawLog.append(mockOutput)
+		});
 	}
 
 	private run<A>(effect: Effect.Effect<A, MonitorFailure>, success?: (value: A) => void): void {

@@ -89,54 +89,52 @@
 			>
 				<Plus /> Add device
 			</Button>
+			<div class="w-28">
+				{#if view.status === 'connected'}
+					<Button variant="destructive" onclick={() => monitor.dispatch({ type: 'disconnect' })}>
+						<CircleStop /> Disconnect
+					</Button>
+				{:else}
+					<Button
+						onclick={() => monitor.dispatch({ type: 'connect' })}
+						disabled={!view.selectedPort || view.status === 'connecting'}
+					>
+						<Plug />
+						Connect
+					</Button>
+				{/if}
+			</div>
 			{#if view.status === 'connected'}
-				<Button variant="destructive" onclick={() => monitor.dispatch({ type: 'disconnect' })}>
-					<CircleStop /> Disconnect
-				</Button>
-			{:else}
-				<Button
-					onclick={() => monitor.dispatch({ type: 'connect' })}
-					disabled={!view.selectedPort || view.status === 'connecting'}
+				<label for="poll-live" class="text-xs font-medium text-muted-foreground lg:ml-auto"
+					>Live polling</label
 				>
-					<Plug />
-					{view.status === 'connecting' ? 'Connecting…' : 'Connect'}
+				<Switch
+					id="poll-live"
+					checked={!view.paused}
+					onCheckedChange={(checked) => monitor.dispatch({ type: 'set-paused', paused: !checked })}
+				/>
+				<Select
+					type="single"
+					value={String(view.intervalMs)}
+					onValueChange={(value) =>
+						monitor.dispatch({
+							type: 'set-interval',
+							intervalMs: Number(value)
+						})}
+				>
+					<SelectTrigger class="w-24" size="sm" aria-label="Polling interval"
+						>{view.intervalMs} ms</SelectTrigger
+					>
+					<SelectContent>
+						{#each intervals as interval (interval)}
+							<SelectItem value={String(interval)}>{interval} ms</SelectItem>
+						{/each}
+					</SelectContent>
+				</Select>
+				<Button variant="outline" size="sm" onclick={() => monitor.dispatch({ type: 'refresh' })}>
+					<RefreshCw class={view.polling ? 'animate-spin' : ''} /> Refresh
 				</Button>
 			{/if}
-			<label for="poll-live" class="text-xs font-medium text-muted-foreground lg:ml-auto"
-				>Live polling</label
-			>
-			<Switch
-				id="poll-live"
-				checked={!view.paused}
-				onCheckedChange={(checked) => monitor.dispatch({ type: 'set-paused', paused: !checked })}
-				disabled={view.status !== 'connected'}
-			/>
-			<Select
-				type="single"
-				value={String(view.intervalMs)}
-				onValueChange={(value) =>
-					monitor.dispatch({
-						type: 'set-interval',
-						intervalMs: Number(value)
-					})}
-			>
-				<SelectTrigger class="w-24" size="sm" aria-label="Polling interval"
-					>{view.intervalMs} ms</SelectTrigger
-				>
-				<SelectContent>
-					{#each intervals as interval (interval)}
-						<SelectItem value={String(interval)}>{interval} ms</SelectItem>
-					{/each}
-				</SelectContent>
-			</Select>
-			<Button
-				variant="outline"
-				size="sm"
-				onclick={() => monitor.dispatch({ type: 'refresh' })}
-				disabled={view.status !== 'connected'}
-			>
-				<RefreshCw class={view.polling ? 'animate-spin' : ''} /> Refresh
-			</Button>
 		</div>
 
 		<div class="flex min-w-0 flex-col gap-3 sm:flex-row sm:items-center">
@@ -161,19 +159,23 @@
 		</div>
 
 		{#if view.status === 'unsupported'}
-			<Alert variant="destructive">
-				<AlertTriangle />
-				<AlertTitle>Web Serial unavailable</AlertTitle>
-				<AlertDescription
-					>Use a Chromium-based browser on a secure origin to connect hardware.</AlertDescription
-				>
-			</Alert>
+			<div class="fixed right-4 bottom-4 z-50 w-[calc(100%-2rem)] max-w-lg shadow-xl">
+				<Alert variant="destructive">
+					<AlertTriangle />
+					<AlertTitle>Web Serial unavailable</AlertTitle>
+					<AlertDescription
+						>Use a Chromium-based browser on a secure origin to connect hardware.</AlertDescription
+					>
+				</Alert>
+			</div>
 		{:else if view.error}
-			<Alert variant="destructive">
-				<AlertTriangle />
-				<AlertTitle>{view.error._tag}</AlertTitle>
-				<AlertDescription>{errorDetail()}</AlertDescription>
-			</Alert>
+			<div class="fixed right-4 bottom-4 z-50 w-[calc(100%-2rem)] max-w-lg shadow-xl">
+				<Alert variant="destructive">
+					<AlertTriangle />
+					<AlertTitle>{view.error._tag}</AlertTitle>
+					<AlertDescription>{errorDetail()}</AlertDescription>
+				</Alert>
+			</div>
 		{/if}
 	</CardContent>
 </Card>
