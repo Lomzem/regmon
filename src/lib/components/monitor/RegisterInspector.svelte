@@ -1,6 +1,7 @@
 <script lang="ts">
 	import Cpu from '@lucide/svelte/icons/cpu';
 	import Star from '@lucide/svelte/icons/star';
+	import Upload from '@lucide/svelte/icons/upload';
 	import { Button } from '$lib/components/ui/button';
 	import { ButtonGroup } from '$lib/components/ui/button-group';
 	import { ScrollArea } from '$lib/components/ui/scroll-area';
@@ -22,6 +23,7 @@
 	let value = $derived(address === null ? 0 : (view.snapshot?.[address] ?? 0));
 	let watched = $derived(address !== null && view.watchlist.includes(address));
 	let base = $state<'hex' | 'decimal' | 'binary'>('hex');
+	let rdlFileInput = $state<HTMLInputElement | null>(null);
 	let decoded = $derived(
 		address === null || !view.registerMap
 			? undefined
@@ -51,6 +53,14 @@
 				? view.watchlist.filter((candidate) => candidate !== address)
 				: [...view.watchlist, address]
 		});
+	}
+
+	async function loadRdlFile(event: Event): Promise<void> {
+		const input = event.currentTarget as HTMLInputElement;
+		const file = input.files?.[0];
+		if (!file) return;
+		monitor.dispatch({ type: 'set-rdl-source', source: await file.text(), fileName: file.name });
+		input.value = '';
 	}
 </script>
 
@@ -130,8 +140,18 @@
 					</ScrollArea>
 				</section>
 			{:else}
-				<div class="rounded-lg border border-dashed p-5 text-sm text-muted-foreground">
-					Load a SystemRDL file to decode this address.
+				<div class="flex items-center justify-between gap-4 rounded-lg border border-dashed p-5">
+					<p class="text-sm text-muted-foreground">Load a SystemRDL file to decode this address.</p>
+					<input
+						bind:this={rdlFileInput}
+						class="sr-only"
+						type="file"
+						accept=".rdl,.systemrdl,text/plain"
+						onchange={loadRdlFile}
+					/>
+					<Button variant="outline" size="sm" onclick={() => rdlFileInput?.click()}>
+						<Upload /> Choose .rdl File
+					</Button>
 				</div>
 			{/if}
 
