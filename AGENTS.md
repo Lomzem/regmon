@@ -1,1 +1,2 @@
 - Always use `bun` instead of `npm` or `node`.
+- See @examples/example_output.txt for example UART output
