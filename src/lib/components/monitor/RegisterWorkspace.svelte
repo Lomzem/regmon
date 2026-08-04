@@ -1,4 +1,5 @@
 <script lang="ts">
+	import Fuse from 'fuse.js';
 	import Binoculars from '@lucide/svelte/icons/binoculars';
 	import ChevronsUpDown from '@lucide/svelte/icons/chevrons-up-down';
 	import X from '@lucide/svelte/icons/x';
@@ -40,11 +41,18 @@
 			};
 		})
 	);
+	let watchFuse = $derived(
+		new Fuse(watchOptions, {
+			keys: ['search'],
+			threshold: 0.35,
+			ignoreLocation: true
+		})
+	);
 	let visibleWatchOptions = $derived.by(() => {
 		const needle = watchSearch.trim().toLowerCase();
-		return watchOptions
-			.filter((option) => !needle || option.search.includes(needle))
-			.slice(0, 32);
+		return needle
+			? watchFuse.search(needle, { limit: 32 }).map((result) => result.item)
+			: watchOptions.slice(0, 32);
 	});
 
 	function hex(value: number): string {

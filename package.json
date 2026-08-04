@@ -68,6 +68,7 @@
 		"*.{js,css,md}": "prettier --write"
 	},
 	"dependencies": {
-		"effect": "^3.22.0"
+		"effect": "^3.22.0",
+		"fuse.js": "^7.5.0"
 	}
 }
