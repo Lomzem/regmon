@@ -22,6 +22,7 @@
 	let view = $derived(monitor.view);
 	let watchSearchOpen = $state(false);
 	let watchSearch = $state('');
+	let watchSelection = $state('');
 	let activeTab = $state('all');
 	const addresses = Array.from({ length: 256 }, (_, address) => address);
 	const nibbles = Array.from({ length: 16 }, (_, nibble) => nibble.toString(16).toUpperCase());
@@ -76,6 +77,7 @@
 			addresses: [...view.watchlist, address]
 		});
 		watchSearch = '';
+		watchSelection = '';
 		watchSearchOpen = false;
 	}
 </script>
@@ -165,13 +167,15 @@
 						{/snippet}
 					</PopoverTrigger>
 					<PopoverContent class="w-[var(--bits-popover-anchor-width)] p-0" align="start">
-						<Command shouldFilter={false}>
+						<Command bind:value={watchSelection} shouldFilter={false} disablePointerSelection>
 							<CommandInput bind:value={watchSearch} placeholder="Search registers and fields" />
 							<CommandList class="max-h-72">
 								<CommandEmpty>No matching register.</CommandEmpty>
 								{#each visibleWatchOptions as option (option.address)}
 									<CommandItem
 										value={option.search}
+										onpointerenter={() => (watchSelection = option.search)}
+										onclick={() => addToWatchlist(option.address)}
 										onSelect={() => addToWatchlist(option.address)}
 									>
 										<span class="w-10 shrink-0 font-mono text-xs text-primary"
