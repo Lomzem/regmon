@@ -32,7 +32,10 @@ export default defineConfig({
                     browser: {
                         enabled: true,
                         provider: playwright(),
-                        instances: [{ browser: 'chromium', headless: true }]
+                        instances: [
+                            { browser: 'chromium', headless: true },
+                            { browser: 'firefox', headless: true }
+                        ]
                     },
                     include: ['src/**/*.svelte.{test,spec}.{js,ts}'],
                     exclude: ['src/lib/server/**']

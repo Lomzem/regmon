@@ -293,7 +293,9 @@ export class BrowserMonitor {
 		}
 		const selection = choosePort(this.serial).pipe(
 			Effect.catchIf(
-				(error) => error.cause instanceof DOMException && error.cause.name === 'AbortError',
+				(error) =>
+					error.cause instanceof DOMException &&
+					(error.cause.name === 'AbortError' || error.cause.name === 'NotFoundError'),
 				() => Effect.succeed(null)
 			)
 		);

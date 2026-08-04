@@ -176,7 +176,7 @@
 			<AlertTriangle />
 			<AlertTitle>Web Serial unavailable</AlertTitle>
 			<AlertDescription
-				>Use a Chromium-based browser on a secure origin to connect hardware.</AlertDescription
+				>Use a browser with Web Serial support on a secure origin to connect hardware.</AlertDescription
 			>
 		</Alert>
 	</div>
