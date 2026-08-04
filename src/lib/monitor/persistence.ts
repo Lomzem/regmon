@@ -8,6 +8,7 @@ export interface MonitorSettings {
 	readonly watchlist: readonly number[];
 	readonly filter: string;
 	readonly rdlSource: string;
+	readonly rdlFileName: string;
 	readonly registerMap: RegisterMap | null;
 }
 

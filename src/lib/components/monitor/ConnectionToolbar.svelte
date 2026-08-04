@@ -20,7 +20,6 @@
 	);
 	const intervals = [250, 500, 1000, 2000, 5000] as const;
 	let fileInput = $state<HTMLInputElement | null>(null);
-	let fileName = $state('');
 
 	function portLabel(index: number): string {
 		const info = view.ports[index].info;
@@ -50,21 +49,19 @@
 		const input = event.currentTarget as HTMLInputElement;
 		const file = input.files?.[0];
 		if (!file) return;
-		fileName = file.name;
-		monitor.dispatch({ type: 'set-rdl-source', source: await file.text() });
+		monitor.dispatch({ type: 'set-rdl-source', source: await file.text(), fileName: file.name });
 		input.value = '';
 	}
 
 	function forgetRdl(): void {
 		monitor.dispatch({ type: 'clear-rdl' });
-		fileName = '';
 		if (fileInput) fileInput.value = '';
 	}
 </script>
 
 <Card class="py-0">
 	<CardContent class="space-y-4 p-4">
-		<div class="flex min-w-0 flex-wrap items-center gap-2">
+		<div class="relative flex min-w-0 flex-wrap items-center gap-2 lg:pr-80">
 			<div class="w-full sm:w-80">
 				<Select
 					type="single"
@@ -104,10 +101,13 @@
 					</Button>
 				{/if}
 			</div>
-			{#if view.status === 'connected'}
-				<label for="poll-live" class="text-xs font-medium text-muted-foreground lg:ml-auto"
-					>Live polling</label
-				>
+			<div
+				class={[
+					'ml-auto flex items-center gap-2 lg:absolute lg:top-1/2 lg:right-0 lg:-translate-y-1/2',
+					view.status !== 'connected' && 'invisible'
+				]}
+			>
+				<label for="poll-live" class="text-xs font-medium text-muted-foreground">Live polling</label>
 				<Switch
 					id="poll-live"
 					checked={!view.paused}
@@ -134,7 +134,7 @@
 				<Button variant="outline" size="sm" onclick={() => monitor.dispatch({ type: 'refresh' })}>
 					<RefreshCw class={view.polling ? 'animate-spin' : ''} /> Refresh
 				</Button>
-			{/if}
+			</div>
 		</div>
 
 		<div class="flex min-w-0 flex-col gap-3 sm:flex-row sm:items-center">
@@ -149,30 +149,34 @@
 			<Button variant="outline" onclick={() => fileInput?.click()}>
 				<Upload /> Choose .rdl file
 			</Button>
-			{#if fileName}<span class="truncate text-xs text-muted-foreground">{fileName}</span>{/if}
-			{#if view.registerMap}
-				<Button variant="ghost" size="sm" onclick={forgetRdl}><Trash2 /> Forget</Button>
+			{#if view.rdlFileName}
+				<div class="flex min-w-0 items-center gap-1">
+					<span class="truncate text-xs text-muted-foreground">{view.rdlFileName}</span>
+					{#if view.registerMap}
+						<Button variant="ghost" size="sm" onclick={forgetRdl}><Trash2 /> Forget</Button>
+					{/if}
+				</div>
 			{/if}
 		</div>
-
-		{#if view.status === 'unsupported'}
-			<div class="fixed right-4 bottom-4 z-50 w-[calc(100%-2rem)] max-w-lg shadow-xl">
-				<Alert variant="destructive">
-					<AlertTriangle />
-					<AlertTitle>Web Serial unavailable</AlertTitle>
-					<AlertDescription
-						>Use a Chromium-based browser on a secure origin to connect hardware.</AlertDescription
-					>
-				</Alert>
-			</div>
-		{:else if view.error}
-			<div class="fixed right-4 bottom-4 z-50 w-[calc(100%-2rem)] max-w-lg shadow-xl">
-				<Alert variant="destructive">
-					<AlertTriangle />
-					<AlertTitle>{view.error._tag}</AlertTitle>
-					<AlertDescription>{errorDetail()}</AlertDescription>
-				</Alert>
-			</div>
-		{/if}
 	</CardContent>
 </Card>
+
+{#if view.status === 'unsupported'}
+	<div class="fixed right-4 bottom-4 z-50 w-[calc(100%-2rem)] max-w-lg shadow-xl">
+		<Alert variant="destructive">
+			<AlertTriangle />
+			<AlertTitle>Web Serial unavailable</AlertTitle>
+			<AlertDescription
+				>Use a Chromium-based browser on a secure origin to connect hardware.</AlertDescription
+			>
+		</Alert>
+	</div>
+{:else if view.error}
+	<div class="fixed right-4 bottom-4 z-50 w-[calc(100%-2rem)] max-w-lg shadow-xl">
+		<Alert variant="destructive">
+			<AlertTriangle />
+			<AlertTitle>{view.error._tag}</AlertTitle>
+			<AlertDescription>{errorDetail()}</AlertDescription>
+		</Alert>
+	</div>
+{/if}

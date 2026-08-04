@@ -44,6 +44,7 @@ export interface MonitorView {
 	readonly selectedAddress: number | null;
 	readonly rawLog: string;
 	readonly rdlSource: string;
+	readonly rdlFileName: string;
 	readonly registerMap: RegisterMap | null;
 	readonly error: MonitorFailure | null;
 }
@@ -61,7 +62,7 @@ export type MonitorAction =
 	| { readonly type: 'set-interval'; readonly intervalMs: number }
 	| { readonly type: 'set-watchlist'; readonly addresses: readonly number[] }
 	| { readonly type: 'set-filter'; readonly filter: string }
-	| { readonly type: 'set-rdl-source'; readonly source: string }
+	| { readonly type: 'set-rdl-source'; readonly source: string; readonly fileName: string }
 	| { readonly type: 'clear-rdl' }
 	| { readonly type: 'select-address'; readonly address: number | null }
 	| { readonly type: 'clear-log' };
@@ -81,6 +82,7 @@ const initialView: MonitorView = {
 	selectedAddress: null,
 	rawLog: '',
 	rdlSource: '',
+	rdlFileName: '',
 	registerMap: null,
 	error: null
 };
@@ -185,10 +187,10 @@ export class BrowserMonitor {
 				this.persist();
 				break;
 			case 'set-rdl-source':
-				this.setRdlSource(action.source);
+				this.setRdlSource(action.source, action.fileName);
 				break;
 			case 'clear-rdl':
-				this.patch({ rdlSource: '', registerMap: null, error: null });
+				this.patch({ rdlSource: '', rdlFileName: '', registerMap: null, error: null });
 				this.persist();
 				break;
 			case 'select-address':
@@ -252,6 +254,7 @@ export class BrowserMonitor {
 			watchlist: Array.isArray(value.watchlist) ? value.watchlist : [],
 			filter: typeof value.filter === 'string' ? value.filter : '',
 			rdlSource: typeof value.rdlSource === 'string' ? value.rdlSource : '',
+			rdlFileName: typeof value.rdlFileName === 'string' ? value.rdlFileName : '',
 			registerMap: value.registerMap ?? null
 		});
 	}
@@ -263,6 +266,7 @@ export class BrowserMonitor {
 			watchlist: this._view.watchlist,
 			filter: this._view.filter,
 			rdlSource: this._view.rdlSource,
+			rdlFileName: this._view.rdlFileName,
 			registerMap: this._view.registerMap
 		};
 		this.run(saveSettings(this.storage, settings));
@@ -396,12 +400,12 @@ export class BrowserMonitor {
 		});
 	}
 
-	private setRdlSource(source: string): void {
+	private setRdlSource(source: string, fileName: string): void {
 		const result = Effect.runSync(Effect.either(parseSystemRdl(source)));
 		if (Either.isLeft(result)) {
-			this.patch({ rdlSource: source, error: result.left });
+			this.patch({ rdlSource: source, rdlFileName: fileName, error: result.left });
 		} else {
-			this.patch({ rdlSource: source, registerMap: result.right, error: null });
+			this.patch({ rdlSource: source, rdlFileName: fileName, registerMap: result.right, error: null });
 		}
 		this.persist();
 	}
