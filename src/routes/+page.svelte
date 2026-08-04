@@ -1,6 +1,5 @@
 <script lang="ts">
 	import ConnectionToolbar from '$lib/components/monitor/ConnectionToolbar.svelte';
-	import RawUartLog from '$lib/components/monitor/RawUartLog.svelte';
 	import RegisterInspector from '$lib/components/monitor/RegisterInspector.svelte';
 	import RegisterWorkspace from '$lib/components/monitor/RegisterWorkspace.svelte';
 	import { setMonitorContext } from '$lib/monitor/context';
@@ -25,7 +24,6 @@
 	<div class="mx-auto flex min-h-screen w-full max-w-7xl flex-col gap-4 px-4 py-5 sm:px-6 lg:py-8">
 		<ConnectionToolbar />
 		<RegisterWorkspace />
-		<RawUartLog />
 		<RegisterInspector />
 	</div>
 </main>

@@ -151,9 +151,6 @@
 			</Button>
 			{#if fileName}<span class="truncate text-xs text-muted-foreground">{fileName}</span>{/if}
 			{#if view.registerMap}
-				<span class="text-xs text-muted-foreground">
-					{view.registerMap.registers.length} registers
-				</span>
 				<Button variant="ghost" size="sm" onclick={forgetRdl}><Trash2 /> Forget</Button>
 			{/if}
 		</div>

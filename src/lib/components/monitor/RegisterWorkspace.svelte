@@ -3,6 +3,7 @@
 	import ListPlus from '@lucide/svelte/icons/list-plus';
 	import Replace from '@lucide/svelte/icons/replace';
 	import Search from '@lucide/svelte/icons/search';
+	import RawUartLog from '$lib/components/monitor/RawUartLog.svelte';
 	import { Badge } from '$lib/components/ui/badge';
 	import { Button } from '$lib/components/ui/button';
 	import { Card, CardContent } from '$lib/components/ui/card';
@@ -68,6 +69,7 @@
 				<TabsTrigger value="watchlist"
 					>Watchlist <Badge variant="secondary">{view.watchlist.length}</Badge></TabsTrigger
 				>
+				<TabsTrigger value="uart">Raw UART Log</TabsTrigger>
 			</TabsList>
 
 			<TabsContent value="all">
@@ -201,6 +203,10 @@
 						{/each}
 					</div>
 				{/if}
+			</TabsContent>
+
+			<TabsContent value="uart">
+				<RawUartLog />
 			</TabsContent>
 		</Tabs>
 	</CardContent>
