@@ -150,10 +150,15 @@
 				<Upload /> Choose .rdl file
 			</Button>
 			{#if view.rdlFileName}
-				<div class="flex min-w-0 items-center gap-1">
-					<span class="truncate text-xs text-muted-foreground">{view.rdlFileName}</span>
+				<div class="flex h-9 min-w-0 items-center overflow-hidden rounded-md border bg-muted/40">
+					<span class="truncate px-3 text-xs text-muted-foreground">{view.rdlFileName}</span>
 					{#if view.registerMap}
-						<Button variant="ghost" size="sm" onclick={forgetRdl}><Trash2 /> Forget</Button>
+						<Button
+							class="h-full rounded-none border-l text-muted-foreground hover:text-foreground"
+							variant="ghost"
+							size="sm"
+							onclick={forgetRdl}><Trash2 /> Forget</Button
+						>
 					{/if}
 				</div>
 			{/if}
