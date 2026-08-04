@@ -1,9 +1,9 @@
 <script lang="ts">
 	import Binary from '@lucide/svelte/icons/binary';
 	import Star from '@lucide/svelte/icons/star';
-	import { Badge } from '$lib/components/ui/badge';
 	import { Button } from '$lib/components/ui/button';
 	import { ButtonGroup } from '$lib/components/ui/button-group';
+	import { ScrollArea } from '$lib/components/ui/scroll-area';
 	import { Separator } from '$lib/components/ui/separator';
 	import {
 		Dialog,
@@ -58,7 +58,7 @@
 		if (!open) monitor.dispatch({ type: 'select-address', address: null });
 	}}
 >
-	<DialogContent class="max-h-[calc(100vh-2rem)] overflow-y-auto sm:max-w-4xl">
+	<DialogContent class="max-h-[calc(100vh-2rem)] overflow-hidden sm:max-w-4xl">
 		<DialogHeader class="border-b pb-4">
 			<DialogTitle class="flex items-center gap-2 font-serif">
 				<Binary class="text-primary" /> Register {address === null ? '--' : `0x${hex(address)}`}
@@ -69,86 +69,82 @@
 					'Raw 8-bit register'}</DialogDescription
 			>
 		</DialogHeader>
+		<Button
+			class="w-52 sm:absolute sm:top-4 sm:right-14"
+			variant={watched ? 'secondary' : 'outline'}
+			onclick={toggleWatchlist}
+		>
+			<Star class={watched ? 'fill-current' : ''} />
+			{watched ? 'Remove from Watchlist' : 'Add to Watchlist'}
+		</Button>
 
-		<div class="space-y-5">
-			<Button class="w-52" variant={watched ? 'secondary' : 'outline'} onclick={toggleWatchlist}>
-				<Star class={watched ? 'fill-current' : ''} />
-				{watched ? 'Remove from Watchlist' : 'Add to Watchlist'}
-			</Button>
-			<div class="flex items-center justify-between gap-4 rounded-lg border bg-muted/50 p-3">
-				<div class="min-w-0">
-					<p class="font-mono text-xl text-primary">{formattedValue()}</p>
-				</div>
-				<ButtonGroup aria-label="Register value base">
-					{#each Object.entries(baseLabels) as [option, label] (option)}
-						<Button
-							class="text-[11px]"
-							size="sm"
-							variant={base === option ? 'default' : 'outline'}
-							onclick={() => (base = option as typeof base)}
-							aria-pressed={base === option}>{label}</Button
-						>
-					{/each}
-				</ButtonGroup>
-			</div>
-
+		<div class="space-y-6">
 			{#if decoded}
-				<div class="space-y-3">
-					<div class="flex flex-wrap items-center gap-2">
-						<h3 class="font-semibold">{decoded.register.displayName ?? decoded.register.name}</h3>
-						{#if decoded.register.softwareAccess}<Badge variant="outline"
-								>{decoded.register.softwareAccess}</Badge
-							>{/if}
-						{#if decoded.register.reset !== undefined}<Badge variant="secondary"
-								>reset 0x{hex(decoded.register.reset)}</Badge
-							>{/if}
-					</div>
-					{#if decoded.register.description}<p
-							class="text-sm leading-relaxed text-muted-foreground"
-						>
-							{decoded.register.description}
-						</p>{/if}
-				</div>
-				<Separator />
-				<div class="space-y-2">
-					<h3 class="font-mono text-xs tracking-wider text-muted-foreground">
-						Decoded Fields
-					</h3>
-					{#each decoded.fields as field (field.field.name)}
-						<div class="rounded-lg border bg-muted/40 p-3">
-							<div class="flex items-start justify-between gap-3">
-								<div class="min-w-0">
-									<p class="font-mono text-sm text-foreground">
-										{field.field.displayName ?? field.field.name}
-									</p>
-									<p class="text-[11px] text-muted-foreground">
-										bits {field.field.highBit}:{field.field.lowBit}{field.field.softwareAccess
-											? ` · ${field.field.softwareAccess}`
-											: ''}
-									</p>
-								</div>
-								<div class="text-right">
-									<p class="font-mono text-primary">{field.value}</p>
-									{#if field.enumValue}<p class="text-xs text-chart-3">
-											{field.enumValue.displayName ?? field.enumValue.name}
+				<section class="space-y-3">
+					<h2 class="font-serif text-lg font-semibold">Decoded Fields</h2>
+					<ScrollArea class={decoded.fields.length > 4 ? 'h-[min(42vh,28rem)]' : ''}>
+						<div class="space-y-3 pr-4">
+							{#each decoded.fields as field (field.field.name)}
+								<div class="rounded-lg border bg-muted/40 p-4">
+									<div class="flex items-start justify-between gap-3">
+										<div class="min-w-0">
+											<h3 class="font-mono text-sm text-foreground">
+												{field.field.displayName ?? field.field.name}
+											</h3>
+											<p class="text-[11px] text-muted-foreground">
+												[{field.field.highBit}:{field.field.lowBit}]
+											</p>
+										</div>
+										<div class="text-right">
+											{#if field.enumValue}<p class="text-base font-semibold text-chart-3">
+													{field.enumValue.displayName ?? field.enumValue.name}
+												</p>
+												<p class="font-mono text-xs text-muted-foreground">{field.value}</p>
+											{:else}
+												<p class="font-mono text-primary">{field.value}</p>
+											{/if}
+										</div>
+									</div>
+									{#if field.field.description}<p
+											class="mt-2 text-xs leading-relaxed text-muted-foreground"
+										>
+											{field.field.description}
 										</p>{/if}
 								</div>
-							</div>
-							{#if field.field.description}<p
-									class="mt-2 text-xs leading-relaxed text-muted-foreground"
-								>
-									{field.field.description}
-								</p>{/if}
+							{:else}
+								<p class="text-sm text-muted-foreground">
+									No fields are defined for this register.
+								</p>
+							{/each}
 						</div>
-					{:else}
-						<p class="text-sm text-muted-foreground">No fields are defined for this register.</p>
-					{/each}
-				</div>
+					</ScrollArea>
+				</section>
 			{:else}
 				<div class="rounded-lg border border-dashed p-5 text-sm text-muted-foreground">
 					Load a SystemRDL file to decode this address.
 				</div>
 			{/if}
+
+			<Separator />
+
+			<div>
+				<div
+					class="flex flex-1 items-center justify-between gap-4 rounded-lg border bg-muted/50 p-3"
+				>
+					<p class="font-mono text-xl text-primary">{formattedValue()}</p>
+					<ButtonGroup aria-label="Register value base">
+						{#each Object.entries(baseLabels) as [option, label] (option)}
+							<Button
+								class="text-[11px]"
+								size="sm"
+								variant={base === option ? 'default' : 'outline'}
+								onclick={() => (base = option as typeof base)}
+								aria-pressed={base === option}>{label}</Button
+							>
+						{/each}
+					</ButtonGroup>
+				</div>
+			</div>
 		</div>
 	</DialogContent>
 </Dialog>
