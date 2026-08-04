@@ -1,5 +1,5 @@
 <script lang="ts">
-	import Binary from '@lucide/svelte/icons/binary';
+	import Cpu from '@lucide/svelte/icons/cpu';
 	import Star from '@lucide/svelte/icons/star';
 	import { Button } from '$lib/components/ui/button';
 	import { ButtonGroup } from '$lib/components/ui/button-group';
@@ -32,13 +32,15 @@
 		return byte.toString(16).padStart(2, '0').toUpperCase();
 	}
 
-	function formattedValue(): string {
-		if (base === 'decimal') return String(value);
+	function formatValue(rawValue: number, bitWidth: number): string {
+		if (base === 'decimal') return String(rawValue);
 		if (base === 'binary') {
-			const bits = value.toString(2).padStart(8, '0');
-			return `${bits.slice(0, 4)} ${bits.slice(4)}`;
+			return rawValue
+				.toString(2)
+				.padStart(bitWidth, '0')
+				.replace(/\B(?=(?:[01]{4})+(?![01]))/g, ' ');
 		}
-		return `0x${hex(value)}`;
+		return `0x${rawValue.toString(16).padStart(Math.ceil(bitWidth / 4), '0').toUpperCase()}`;
 	}
 
 	function toggleWatchlist(): void {
@@ -59,24 +61,28 @@
 	}}
 >
 	<DialogContent class="max-h-[calc(100vh-2rem)] overflow-hidden sm:max-w-4xl">
-		<DialogHeader class="border-b pb-4">
-			<DialogTitle class="flex items-center gap-2 font-serif">
-				<Binary class="text-primary" /> Register {address === null ? '--' : `0x${hex(address)}`}
-			</DialogTitle>
-			<DialogDescription
-				>{decoded?.register.displayName ??
-					decoded?.register.name ??
-					'Raw 8-bit register'}</DialogDescription
-			>
-		</DialogHeader>
-		<Button
-			class="w-52 sm:absolute sm:top-4 sm:right-14"
-			variant={watched ? 'secondary' : 'outline'}
-			onclick={toggleWatchlist}
+		<DialogHeader
+			class="border-b pb-4 sm:grid sm:grid-cols-[minmax(0,1fr)_auto] sm:gap-x-4 sm:pr-10"
 		>
-			<Star class={watched ? 'fill-current' : ''} />
-			{watched ? 'Remove from Watchlist' : 'Add to Watchlist'}
-		</Button>
+			<div class="space-y-2">
+				<DialogTitle class="flex items-center gap-2 font-serif">
+					<Cpu class="text-primary" /> Register {address === null ? '--' : `0x${hex(address)}`}
+				</DialogTitle>
+				<DialogDescription
+					>{decoded?.register.displayName ??
+						decoded?.register.name ??
+						'Raw 8-bit register'}</DialogDescription
+				>
+			</div>
+			<Button
+				class="w-full sm:w-52 sm:self-stretch"
+				variant={watched ? 'secondary' : 'outline'}
+				onclick={toggleWatchlist}
+			>
+				<Star class={watched ? 'fill-current' : ''} />
+				{watched ? 'Remove from Watchlist' : 'Add to Watchlist'}
+			</Button>
+		</DialogHeader>
 
 		<div class="space-y-6">
 			{#if decoded}
@@ -91,7 +97,7 @@
 											<h3 class="font-mono text-sm text-foreground">
 												{field.field.displayName ?? field.field.name}
 											</h3>
-											<p class="text-[11px] text-muted-foreground">
+											<p class="text-[10px] text-muted-foreground/50">
 												[{field.field.highBit}:{field.field.lowBit}]
 											</p>
 										</div>
@@ -99,9 +105,13 @@
 											{#if field.enumValue}<p class="text-base font-semibold text-chart-3">
 													{field.enumValue.displayName ?? field.enumValue.name}
 												</p>
-												<p class="font-mono text-xs text-muted-foreground">{field.value}</p>
+												<p class="font-mono text-xs text-muted-foreground">
+													{formatValue(field.value, field.field.highBit - field.field.lowBit + 1)}
+												</p>
 											{:else}
-												<p class="font-mono text-primary">{field.value}</p>
+												<p class="font-mono text-primary">
+													{formatValue(field.value, field.field.highBit - field.field.lowBit + 1)}
+												</p>
 											{/if}
 										</div>
 									</div>
@@ -131,7 +141,7 @@
 				<div
 					class="flex flex-1 items-center justify-between gap-4 rounded-lg border bg-muted/50 p-3"
 				>
-					<p class="font-mono text-xl text-primary">{formattedValue()}</p>
+					<p class="font-mono text-xl text-primary">{formatValue(value, 8)}</p>
 					<ButtonGroup aria-label="Register value base">
 						{#each Object.entries(baseLabels) as [option, label] (option)}
 							<Button
