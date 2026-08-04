@@ -36,14 +36,7 @@
 		return value.toString(16).padStart(2, '0').toUpperCase();
 	}
 
-	function toggleAddress(address: number): void {
-		const watched = view.watchlist.includes(address);
-		monitor.dispatch({
-			type: 'set-watchlist',
-			addresses: watched
-				? view.watchlist.filter((candidate) => candidate !== address)
-				: [...view.watchlist, address]
-		});
+	function inspectAddress(address: number): void {
 		monitor.dispatch({ type: 'select-address', address });
 	}
 
@@ -114,9 +107,8 @@
 										value !== 0 && 'bg-secondary text-foreground',
 										changed && 'animate-pulse border-chart-4 bg-chart-4/20 text-chart-4'
 									]}
-									onclick={() => toggleAddress(address)}
+									onclick={() => inspectAddress(address)}
 									aria-label={`Register 0x${hex(address)}, value 0x${hex(value)}${changed ? ', changed' : ''}${watched ? ', watched' : ''}`}
-									aria-pressed={watched}
 								>
 									{hex(value)}
 									{#if watched}<span
@@ -189,8 +181,8 @@
 							<button
 								type="button"
 								class="flex items-center justify-between rounded-lg border bg-muted/50 p-3 text-left transition-colors hover:border-primary/60 hover:bg-primary/10 focus-visible:ring-2 focus-visible:ring-primary focus-visible:outline-none"
-								onclick={() => toggleAddress(address)}
-								aria-label={`Remove register 0x${hex(address)} from watchlist and inspect it`}
+								onclick={() => inspectAddress(address)}
+								aria-label={`Inspect register 0x${hex(address)}`}
 							>
 								<span class="min-w-0">
 									<span class="block font-mono text-xs text-primary">0x{hex(address)}</span>

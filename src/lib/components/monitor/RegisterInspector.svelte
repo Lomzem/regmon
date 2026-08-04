@@ -1,16 +1,17 @@
 <script lang="ts">
 	import Binary from '@lucide/svelte/icons/binary';
+	import Star from '@lucide/svelte/icons/star';
 	import { Badge } from '$lib/components/ui/badge';
 	import { Button } from '$lib/components/ui/button';
 	import { ButtonGroup } from '$lib/components/ui/button-group';
 	import { Separator } from '$lib/components/ui/separator';
 	import {
-		Sheet,
-		SheetContent,
-		SheetDescription,
-		SheetHeader,
-		SheetTitle
-	} from '$lib/components/ui/sheet';
+		Dialog,
+		DialogContent,
+		DialogDescription,
+		DialogHeader,
+		DialogTitle
+	} from '$lib/components/ui/dialog';
 	import { getMonitorContext } from '$lib/monitor/context';
 	import { decodeRegisterMap } from '$lib/rdl/decode';
 
@@ -19,6 +20,7 @@
 	let view = $derived(monitor.view);
 	let address = $derived(view.selectedAddress);
 	let value = $derived(address === null ? 0 : (view.snapshot?.[address] ?? 0));
+	let watched = $derived(address !== null && view.watchlist.includes(address));
 	let base = $state<'hex' | 'decimal' | 'binary'>('hex');
 	let decoded = $derived(
 		address === null || !view.registerMap
@@ -32,41 +34,57 @@
 
 	function formattedValue(): string {
 		if (base === 'decimal') return String(value);
-		if (base === 'binary') return value.toString(2).padStart(8, '0');
+		if (base === 'binary') {
+			const bits = value.toString(2).padStart(8, '0');
+			return `${bits.slice(0, 4)} ${bits.slice(4)}`;
+		}
 		return `0x${hex(value)}`;
+	}
+
+	function toggleWatchlist(): void {
+		if (address === null) return;
+		monitor.dispatch({
+			type: 'set-watchlist',
+			addresses: watched
+				? view.watchlist.filter((candidate) => candidate !== address)
+				: [...view.watchlist, address]
+		});
 	}
 </script>
 
-<Sheet
+<Dialog
 	open={address !== null}
 	onOpenChange={(open) => {
 		if (!open) monitor.dispatch({ type: 'select-address', address: null });
 	}}
 >
-	<SheetContent class="w-full overflow-y-auto bg-card sm:max-w-lg">
-		<SheetHeader class="border-b pb-4">
-			<SheetTitle class="flex items-center gap-2 font-serif">
+	<DialogContent class="max-h-[calc(100vh-2rem)] overflow-y-auto sm:max-w-4xl">
+		<DialogHeader class="border-b pb-4">
+			<DialogTitle class="flex items-center gap-2 font-serif">
 				<Binary class="text-primary" /> Register {address === null ? '--' : `0x${hex(address)}`}
-			</SheetTitle>
-			<SheetDescription
+			</DialogTitle>
+			<DialogDescription
 				>{decoded?.register.displayName ??
 					decoded?.register.name ??
-					'Raw 8-bit register'}</SheetDescription
+					'Raw 8-bit register'}</DialogDescription
 			>
-		</SheetHeader>
+		</DialogHeader>
 
-		<div class="space-y-5 px-4 pb-6">
+		<div class="space-y-5">
+			<Button class="w-52" variant={watched ? 'secondary' : 'outline'} onclick={toggleWatchlist}>
+				<Star class={watched ? 'fill-current' : ''} />
+				{watched ? 'Remove from Watchlist' : 'Add to Watchlist'}
+			</Button>
 			<div class="flex items-center justify-between gap-4 rounded-lg border bg-muted/50 p-3">
 				<div class="min-w-0">
-					<p class="text-[10px] tracking-wider text-muted-foreground">{baseLabels[base]}</p>
-					<p class="mt-1 font-mono text-xl text-primary">{formattedValue()}</p>
+					<p class="font-mono text-xl text-primary">{formattedValue()}</p>
 				</div>
 				<ButtonGroup aria-label="Register value base">
 					{#each Object.entries(baseLabels) as [option, label] (option)}
 						<Button
 							class="text-[11px]"
 							size="sm"
-							variant={base === option ? 'secondary' : 'outline'}
+							variant={base === option ? 'default' : 'outline'}
 							onclick={() => (base = option as typeof base)}
 							aria-pressed={base === option}>{label}</Button
 						>
@@ -132,5 +150,5 @@
 				</div>
 			{/if}
 		</div>
-	</SheetContent>
-</Sheet>
+	</DialogContent>
+</Dialog>
