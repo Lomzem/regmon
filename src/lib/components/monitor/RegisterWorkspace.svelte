@@ -28,7 +28,9 @@
 	const nibbles = Array.from({ length: 16 }, (_, nibble) => nibble.toString(16).toUpperCase());
 	let watchOptions = $derived(
 		addresses.map((address) => {
-			const register = view.registerMap?.registers.find((candidate) => candidate.address === address);
+			const register = view.registerMap?.registers.find(
+				(candidate) => candidate.address === address
+			);
 			const fields = register?.fields
 				.flatMap((field) => [field.name, field.displayName, field.description])
 				.filter(Boolean)
@@ -96,7 +98,7 @@
 			<TabsContent value="all">
 				{#if !view.snapshot}
 					<div
-						class="flex min-h-52 flex-col items-center justify-center rounded-lg border border-dashed bg-background/50 px-6 py-8 text-center"
+						class="flex min-h-52 flex-col items-center justify-center rounded-lg border border-dashed bg-muted/40 px-6 py-8 text-center"
 					>
 						<Binoculars class="mb-3 size-8 text-muted-foreground" />
 						<p class="font-medium">No register snapshot</p>
@@ -128,12 +130,12 @@
 								<button
 									type="button"
 									class={[
-										'relative flex h-9 w-10 items-center justify-center rounded border font-mono text-xs transition-colors focus-visible:ring-2 focus-visible:ring-primary focus-visible:outline-none',
+										'relative flex h-9 w-10 items-center justify-center rounded border font-mono text-xs transition-colors focus-visible:ring-2 focus-visible:ring-ring focus-visible:outline-none',
 										view.selectedAddress === address
-											? 'border-primary bg-primary/20 text-foreground'
-											: 'border-border bg-background text-muted-foreground hover:border-muted-foreground',
-										value !== 0 && 'bg-secondary text-foreground',
-										changed && 'animate-pulse border-chart-4 bg-chart-4/20 text-chart-4'
+											? 'border-primary bg-primary/20 text-primary'
+											: 'border-border bg-card text-muted-foreground hover:border-muted-foreground',
+										value !== 0 && 'bg-accent text-accent-foreground',
+										changed && 'animate-pulse border-primary bg-primary/20 text-primary'
 									]}
 									onclick={() => inspectAddress(address)}
 									aria-label={`Register 0x${hex(address)}, value 0x${hex(value)}${changed ? ', changed' : ''}${watched ? ', watched' : ''}`}
@@ -183,8 +185,7 @@
 										>
 										<span class="min-w-0">
 											<span class="block truncate">{option.label}</span>
-											{#if option.fields}<span
-													class="block truncate text-xs text-muted-foreground"
+											{#if option.fields}<span class="block truncate text-xs text-muted-foreground"
 													>{option.fields}</span
 												>{/if}
 										</span>
@@ -211,7 +212,7 @@
 							<div class="group relative">
 								<button
 									type="button"
-									class="flex w-full items-center justify-between rounded-lg border bg-muted/50 p-3 pr-10 text-left transition-colors hover:border-primary/60 hover:bg-primary/10 focus-visible:ring-2 focus-visible:ring-primary focus-visible:outline-none"
+									class="flex w-full items-center justify-between rounded-lg border bg-muted/50 p-3 pr-10 text-left transition-colors hover:border-accent-foreground/40 hover:bg-accent hover:text-accent-foreground focus-visible:ring-2 focus-visible:ring-ring focus-visible:outline-none"
 									onclick={() => inspectAddress(address)}
 									aria-label={`Inspect register 0x${hex(address)}`}
 								>

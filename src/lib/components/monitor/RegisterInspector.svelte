@@ -42,7 +42,10 @@
 				.padStart(bitWidth, '0')
 				.replace(/\B(?=(?:[01]{4})+(?![01]))/g, ' ');
 		}
-		return `0x${rawValue.toString(16).padStart(Math.ceil(bitWidth / 4), '0').toUpperCase()}`;
+		return `0x${rawValue
+			.toString(16)
+			.padStart(Math.ceil(bitWidth / 4), '0')
+			.toUpperCase()}`;
 	}
 
 	function toggleWatchlist(): void {
@@ -112,7 +115,7 @@
 											</p>
 										</div>
 										<div class="text-right">
-											{#if field.enumValue}<p class="text-base font-semibold text-chart-3">
+											{#if field.enumValue}<p class="text-base font-semibold text-primary">
 													{field.enumValue.displayName ?? field.enumValue.name}
 												</p>
 												<p class="font-mono text-xs text-muted-foreground">

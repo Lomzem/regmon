@@ -40,5 +40,5 @@
 	</div>
 </div>
 <pre
-	class="max-h-[32rem] min-h-52 overflow-auto rounded-lg border bg-background p-3 font-mono text-[11px] leading-5 whitespace-pre-wrap text-chart-3">{view.rawLog ||
+	class="max-h-[32rem] min-h-52 overflow-auto rounded-lg border bg-muted/40 p-3 font-mono text-[11px] leading-5 whitespace-pre-wrap text-foreground">{view.rawLog ||
 		'No UART text received.'}</pre>
