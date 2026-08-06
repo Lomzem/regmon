@@ -78,7 +78,7 @@
 			class="border-b pb-4 sm:grid sm:grid-cols-[minmax(0,1fr)_auto] sm:gap-x-4 sm:pr-10"
 		>
 			<div class="space-y-2">
-				<DialogTitle class="flex items-center gap-2 font-serif">
+				<DialogTitle class="flex items-center gap-2 font-sans">
 					<Cpu class="text-primary" /> Register {address === null ? '--' : `0x${hex(address)}`}
 				</DialogTitle>
 				<DialogDescription
@@ -100,7 +100,7 @@
 		<div class="space-y-6">
 			{#if decoded}
 				<section class="space-y-3">
-					<h2 class="font-serif text-lg font-semibold">Decoded Fields</h2>
+					<h2 class="font-sans text-lg font-semibold">Decoded Fields</h2>
 					<ScrollArea class={decoded.fields.length > 4 ? 'h-[min(42vh,28rem)]' : ''}>
 						<div class="space-y-3 pr-4">
 							{#each decoded.fields as field (field.field.name)}
