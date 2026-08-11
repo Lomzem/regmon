@@ -1,7 +1,8 @@
 import { Effect, Either } from 'effect';
 import { describe, expect, it } from 'vitest';
 import { requestRegisterSnapshot } from '$lib/monitor/protocol';
-import { openSerialPort } from './web-serial';
+import { SerialSelectionError } from './errors';
+import { isSerialSelectionCancelled, openSerialPort } from './web-serial';
 
 function dump(): Uint8Array {
 	const text = Array.from({ length: 16 }, (_, row) => {
@@ -112,4 +113,31 @@ it('removes a timed-out read before framing the next response', async () => {
 			})
 		)
 	);
+});
+
+it('distinguishes user cancellation from other port selection failures', () => {
+	expect(
+		isSerialSelectionCancelled(
+			new SerialSelectionError({
+				message: 'cancelled',
+				cause: new DOMException('No port selected', 'NotFoundError')
+			})
+		)
+	).toBe(true);
+	expect(
+		isSerialSelectionCancelled(
+			new SerialSelectionError({
+				message: 'aborted',
+				cause: new DOMException('Selection aborted', 'AbortError')
+			})
+		)
+	).toBe(true);
+	expect(
+		isSerialSelectionCancelled(
+			new SerialSelectionError({
+				message: 'blocked',
+				cause: new DOMException('Blocked by policy', 'SecurityError')
+			})
+		)
+	).toBe(false);
 });

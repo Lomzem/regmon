@@ -57,6 +57,14 @@ export function choosePort(serial: Serial): Effect.Effect<SerialPort, SerialSele
 	});
 }
 
+export function isSerialSelectionCancelled(error: SerialSelectionError): boolean {
+	return (
+		typeof DOMException !== 'undefined' &&
+		error.cause instanceof DOMException &&
+		(error.cause.name === 'NotFoundError' || error.cause.name === 'AbortError')
+	);
+}
+
 class BrowserSerialConnection implements SerialConnection {
 	readonly port: SerialPort;
 	private readonly writer: WritableStreamDefaultWriter<Uint8Array>;

@@ -1,0 +1,11 @@
+# Automatically generated - DO NOT EDIT!
+
+[[permission]]
+identifier = "allow-disconnect-transport"
+description = "Enables the disconnect_transport command without any pre-configured scope."
+commands.allow = ["disconnect_transport"]
+
+[[permission]]
+identifier = "deny-disconnect-transport"
+description = "Denies the disconnect_transport command without any pre-configured scope."
+commands.deny = ["disconnect_transport"]

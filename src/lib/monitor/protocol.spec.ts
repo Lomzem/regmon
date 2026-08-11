@@ -2,6 +2,7 @@ import { Effect } from 'effect';
 import { describe, expect, it } from 'vitest';
 import { SerialReadError } from '$lib/serial/errors';
 import { READ_ALL_COMMAND, RawLogBuffer, requestRegisterSnapshot } from './protocol';
+import exampleOutput from '../../../examples/example_output.txt?raw';
 
 function dump(): string {
 	return Array.from({ length: 16 }, (_, row) => {
@@ -14,6 +15,15 @@ function dump(): string {
 }
 
 describe('requestRegisterSnapshot', () => {
+	it('parses the checked-in UART example directly', async () => {
+		const connection = {
+			readText: Effect.succeed(exampleOutput),
+			writeText: () => Effect.void
+		};
+		const snapshot = await Effect.runPromise(requestRegisterSnapshot(connection));
+		expect(snapshot).toHaveLength(256);
+	});
+
 	it('writes the command and ignores noise and chunk boundaries', async () => {
 		const chunks = ['noise\r\n' + dump().slice(0, 100), dump().slice(100)];
 		const writes: string[] = [];

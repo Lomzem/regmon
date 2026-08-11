@@ -1,0 +1,27 @@
+.git
+.github
+.husky
+.dockerignore
+Dockerfile
+.output
+.svelte-kit
+.vercel
+.wrangler
+build
+coverage
+dist
+node_modules
+package-lock.json
+playwright-report
+test-results
+src-tauri/target
+src-tauri/gen
+.env
+.env.*
+*.log
+.DS_Store
+Thumbs.db
+
+# Local protocol references are not release build inputs.
+opengear-software-dev-guide.txt
+og_udc_4k.rdl

@@ -1,0 +1,48 @@
+{
+	"$schema": "https://schema.tauri.app/config/2",
+	"productName": "RegMon",
+	"version": "0.0.1",
+	"identifier": "com.regmon.desktop",
+	"build": {
+		"beforeDevCommand": "bun run dev",
+		"beforeBuildCommand": "bun run build",
+		"devUrl": "http://localhost:5173",
+		"frontendDist": "../build"
+	},
+	"app": {
+		"windows": [
+			{
+				"label": "main",
+				"title": "RegMon",
+				"width": 1280,
+				"height": 820,
+				"minWidth": 360,
+				"minHeight": 640
+			}
+		],
+		"security": {
+			"capabilities": ["main"],
+			"csp": "default-src 'self'; img-src 'self' asset: data:; style-src 'self' 'unsafe-inline'; script-src 'self'"
+		}
+	},
+	"bundle": {
+		"active": true,
+		"targets": "all",
+		"shortDescription": "UART and openGear register monitor",
+		"longDescription": "Inspect an 8-bit register map through native UART or binary openGear TCP.",
+		"windows": {
+			"webviewInstallMode": {
+				"type": "downloadBootstrapper",
+				"silent": true
+			},
+			"nsis": {
+				"installMode": "currentUser"
+			}
+		},
+		"linux": {
+			"deb": {
+				"depends": ["libudev1"]
+			}
+		}
+	}
+}

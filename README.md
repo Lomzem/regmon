@@ -1,42 +1,108 @@
-# sv
+# RegMon
 
-Everything you need to build a Svelte project, powered by [`sv`](https://github.com/sveltejs/cli).
+RegMon inspects a 256-byte register map through either:
 
-## Creating a project
+- Native binary openGear Protocol over TCP in the Tauri desktop application.
+- Native UART at 115200 baud, 8 data bits, one stop bit, no parity, and no flow control.
+- Browser Web Serial when the frontend runs outside Tauri in a compatible browser.
 
-If you're seeing this, you've probably already done this step. Congrats!
+The desktop application does not automatically fall back from OGP to UART.
 
-```sh
-# create a new project
-npx sv create my-app
-```
+## Frontend Development
 
-To recreate this project with the same configuration:
-
-```sh
-# recreate this project
-bun x sv@0.16.6 create --template minimal --types ts --add prettier eslint vitest="usages:unit,component" tailwindcss="plugins:none" sveltekit-adapter="adapter:static" mcp="ide:opencode" --install bun regmon
-```
-
-## Developing
-
-Once you've created a project and installed dependencies with `npm install` (or `pnpm install` or `yarn`), start a development server:
+Install JavaScript dependencies and start the browser preview:
 
 ```sh
-npm run dev
-
-# or start the server and open the app in a new browser tab
-npm run dev -- --open
+bun install
+bun run dev
 ```
 
-## Building
+The browser preview supports Web Serial but not TCP OGP. Use a Chromium-based browser for Web Serial.
 
-To create a production version of your app:
+Run frontend checks and tests:
 
 ```sh
-npm run build
+bun run check
+bun run test
+bun run build
 ```
 
-You can preview the production build with `npm run preview`.
+## Desktop Development
 
-> To deploy your app, you may need to install an [adapter](https://svelte.dev/docs/kit/adapters) for your target environment.
+Tauri 2 requires the stable Rust toolchain and native platform build dependencies.
+
+Ubuntu build packages include:
+
+```sh
+sudo apt install libwebkit2gtk-4.1-dev build-essential curl wget file libxdo-dev \
+  libssl-dev libayatana-appindicator3-dev librsvg2-dev libudev-dev
+```
+
+Windows requires Microsoft C++ Build Tools with the Desktop development with C++ workload and Microsoft Edge WebView2.
+
+Start the desktop application:
+
+```sh
+bun run desktop:dev
+```
+
+## Distribution Builds
+
+### Containerized Docker Release
+
+Docker with the BuildKit `buildx` plugin is required. One Ubuntu 22.04 container build creates the Ubuntu amd64 Debian package and the portable Windows 10/11 x64 MSVC executable:
+
+```sh
+docker buildx build --platform linux/amd64 --target artifacts --output type=local,dest=dist .
+```
+
+The command writes only these release artifacts to the local output directory. `<version>` is read from `package.json`; the build fails if the Tauri or Cargo package version differs:
+
+- `dist/RegMon_<version>_amd64.deb`
+- `dist/RegMon.exe`
+
+The image digest, Bun, rustup-init, Rust, cargo-xwin, Windows SDK, and MSVC CRT are pinned. Ubuntu package updates are resolved at build time, and the output is not byte-for-byte reproducible.
+
+The portable executable is not an installer and does not embed WebView2. It requires the Microsoft Edge WebView2 Runtime installed on the Windows system. Windows 11 includes WebView2. Most, but not all, Windows 10 systems have it, so managed or offline systems can require a separate WebView2 Runtime installation.
+
+Test the portable executable on Windows 10 and Windows 11 before release. Code-sign the executable for production distribution to reduce SmartScreen trust warnings.
+
+### Native Platform Builds
+
+Build native installers on the operating system that will run the output.
+
+Windows creates an NSIS setup executable under `src-tauri/target/release/bundle/nsis/`:
+
+```sh
+bun tauri build --bundles nsis
+```
+
+Ubuntu creates a Debian package under `src-tauri/target/release/bundle/deb/`:
+
+```sh
+bun tauri build --bundles deb
+```
+
+Windows distribution builds should be code-signed to avoid SmartScreen trust warnings. The default installer downloads WebView2 when it is missing, so installation can require network access.
+
+## Ubuntu Serial Access
+
+The desktop application opens the selected `/dev/tty*` device as the current user. On Ubuntu, that user normally needs membership in the `dialout` group:
+
+```sh
+sudo usermod -a -G dialout "$USER"
+```
+
+Log out and log in again after changing group membership. The Debian package does not change user groups or install broad udev rules.
+
+## Hardware Behavior
+
+UART sends `r 1 1\r\n` and waits for the existing 16-row register dump format shown in `examples/example_output.txt`. A silent, partial, or malformed response times out after three seconds. The failed scan keeps its prior values marked stale, and a later scan can start normally.
+
+OGP connects to port 5253 by default and performs the `0xFF03` connection handshake. The response source, destination, message type, OID, data length, return code, and 16-bit allow value must be valid before RegMon accepts the connection. Normal connection is the default. Force connection is sent only when selected in the UI and can displace another client.
+
+For each register, OGP sends a NUL-terminated `fpgarr 0xNN` command to the selected slot. The command acknowledgment means only that the command was accepted. Register values are collected separately from NUL-, CR-, or LF-terminated OGP print records. A full scan first drains late output, permits one command without an acknowledgment, retries only missing addresses twice, has a total two-minute deadline, and preserves old values for registers that remain missing.
+
+The OGP Transport Log keeps unrelated output and messages from other sources. Device discovery through SLP is not implemented; enter the frame host or IP address manually.
+
+Hardware validation must cover the actual frame controller, card firmware, USB serial adapter, Windows driver, detach behavior, and managed-network firewall policy.

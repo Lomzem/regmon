@@ -2,6 +2,7 @@
 	import Cpu from '@lucide/svelte/icons/cpu';
 	import Star from '@lucide/svelte/icons/star';
 	import Upload from '@lucide/svelte/icons/upload';
+	import { Badge } from '$lib/components/ui/badge';
 	import { Button } from '$lib/components/ui/button';
 	import { ButtonGroup } from '$lib/components/ui/button-group';
 	import { ScrollArea } from '$lib/components/ui/scroll-area';
@@ -15,6 +16,7 @@
 	} from '$lib/components/ui/dialog';
 	import { getMonitorContext } from '$lib/monitor/context';
 	import { decodeRegisterMap } from '$lib/rdl/decode';
+	import { formatUpdateTime, isStaleAddress } from '$lib/monitor/presentation';
 
 	const monitor = getMonitorContext();
 	const baseLabels = { hex: 'Hex', decimal: 'Decimal', binary: 'Binary' } as const;
@@ -22,6 +24,7 @@
 	let address = $derived(view.selectedAddress);
 	let value = $derived(address === null ? 0 : (view.snapshot?.[address] ?? 0));
 	let watched = $derived(address !== null && view.watchlist.includes(address));
+	let stale = $derived(address !== null && isStaleAddress(address, view.missingAddresses));
 	let base = $state<'hex' | 'decimal' | 'binary'>('hex');
 	let rdlFileInput = $state<HTMLInputElement | null>(null);
 	let decoded = $derived(
@@ -73,13 +76,18 @@
 		if (!open) monitor.dispatch({ type: 'select-address', address: null });
 	}}
 >
-	<DialogContent class="max-h-[calc(100vh-2rem)] overflow-hidden sm:max-w-4xl">
+	<DialogContent
+		class="max-h-[calc(100vh-1rem)] overflow-hidden sm:max-h-[calc(100vh-2rem)] sm:max-w-4xl"
+	>
 		<DialogHeader
 			class="border-b pb-4 sm:grid sm:grid-cols-[minmax(0,1fr)_auto] sm:gap-x-4 sm:pr-10"
 		>
 			<div class="space-y-2">
-				<DialogTitle class="flex items-center gap-2 font-sans">
+				<DialogTitle class="flex flex-wrap items-center gap-2 font-sans">
 					<Cpu class="text-primary" /> Register {address === null ? '--' : `0x${hex(address)}`}
+					{#if stale}<Badge class="border-amber-500/50 text-amber-300" variant="outline"
+							>Stale</Badge
+						>{/if}
 				</DialogTitle>
 				<DialogDescription
 					>{decoded?.register.displayName ??
@@ -88,7 +96,7 @@
 				>
 			</div>
 			<Button
-				class="w-full sm:w-52 sm:self-stretch"
+				class="min-h-11 w-full sm:w-52 sm:self-stretch"
 				variant={watched ? 'secondary' : 'outline'}
 				onclick={toggleWatchlist}
 			>
@@ -98,6 +106,23 @@
 		</DialogHeader>
 
 		<div class="space-y-6">
+			<div
+				class={[
+					'flex flex-wrap items-center justify-between gap-2 rounded-md border px-3 py-2 text-xs',
+					stale
+						? 'border-amber-500/50 bg-amber-500/10 text-amber-200'
+						: 'border-border bg-muted/30 text-muted-foreground'
+				]}
+			>
+				<span
+					>{stale
+						? 'Previous value retained; this address did not respond in the last scan.'
+						: 'Value is current for the latest completed response.'}</span
+				>
+				<span class="font-mono text-[10px]"
+					>{view.snapshotSource ?? 'No source'} · {formatUpdateTime(view.snapshotAt)}</span
+				>
+			</div>
 			{#if decoded}
 				<section class="space-y-3">
 					<h2 class="font-sans text-lg font-semibold">Decoded Fields</h2>
@@ -152,7 +177,12 @@
 						accept=".rdl,.systemrdl,text/plain"
 						onchange={loadRdlFile}
 					/>
-					<Button variant="outline" size="sm" onclick={() => rdlFileInput?.click()}>
+					<Button
+						class="min-h-10 sm:min-h-8"
+						variant="outline"
+						size="sm"
+						onclick={() => rdlFileInput?.click()}
+					>
 						<Upload /> Choose .rdl File
 					</Button>
 				</div>
@@ -168,7 +198,7 @@
 					<ButtonGroup aria-label="Register value base">
 						{#each Object.entries(baseLabels) as [option, label] (option)}
 							<Button
-								class="text-[11px]"
+								class="min-h-10 text-[11px] sm:min-h-8"
 								size="sm"
 								variant={base === option ? 'default' : 'outline'}
 								onclick={() => (base = option as typeof base)}

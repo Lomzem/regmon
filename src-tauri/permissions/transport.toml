@@ -1,0 +1,9 @@
+[[permission]]
+identifier = "transport"
+description = "Allow the main RegMon window to enumerate and control native OGP and UART sessions."
+commands.allow = [
+  "list_serial_ports",
+  "connect_transport",
+  "scan_transport",
+  "disconnect_transport",
+]

@@ -1,0 +1,7 @@
+{
+	"$schema": "../gen/schemas/desktop-schema.json",
+	"identifier": "main",
+	"description": "Allow the bundled main window to use only RegMon transport commands.",
+	"windows": ["main"],
+	"permissions": ["core:default", "transport"]
+}
