@@ -16,12 +16,44 @@ export type DecodedRegister = {
 	readonly fields: readonly DecodedField[];
 };
 
+interface RegisterIndexCache {
+	readonly registers: readonly Register[];
+	readonly entries: readonly Register[];
+	readonly addresses: readonly number[];
+	readonly index: ReadonlyMap<number, Register>;
+}
+
+const registerIndexes = new WeakMap<RegisterMap, RegisterIndexCache>();
+
 export function indexRegisters(registers: readonly Register[]): ReadonlyMap<number, Register> {
 	const indexed = new Map<number, Register>();
 	for (const register of registers) {
 		if (!indexed.has(register.address)) indexed.set(register.address, register);
 	}
 	return indexed;
+}
+
+export function indexRegisterMap(registerMap: RegisterMap): ReadonlyMap<number, Register> {
+	const cached = registerIndexes.get(registerMap);
+	if (
+		cached?.registers === registerMap.registers &&
+		cached.entries.length === registerMap.registers.length &&
+		cached.entries.every(
+			(register, index) =>
+				register === registerMap.registers[index] &&
+				cached.addresses[index] === registerMap.registers[index].address
+		)
+	) {
+		return cached.index;
+	}
+	const index = indexRegisters(registerMap.registers);
+	registerIndexes.set(registerMap, {
+		registers: registerMap.registers,
+		entries: [...registerMap.registers],
+		addresses: registerMap.registers.map((register) => register.address),
+		index
+	});
+	return index;
 }
 
 export function decodeRegister(register: Register, byte: number): DecodedRegister {
@@ -50,6 +82,6 @@ export function decodeRegisterMap(
 	address: number,
 	byte: number
 ): DecodedRegister | undefined {
-	const register = indexRegisters(registerMap.registers).get(address);
+	const register = indexRegisterMap(registerMap).get(address);
 	return register && decodeRegister(register, byte);
 }

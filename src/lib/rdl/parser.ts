@@ -477,11 +477,26 @@ class Parser {
 		else {
 			const pieces = value.split('.');
 			const memberName = pieces[pieces.length - 1];
-			const targetEnum =
-				pieces.length > 1
-					? enumScope.get(pieces[pieces.length - 2])
-					: enumScope.get(enumName ?? '');
-			resolved = targetEnum?.values.find((member) => member.name === memberName)?.value;
+			const targetName = pieces.length > 1 ? pieces[pieces.length - 2] : enumName;
+			const targetEnum = targetName ? enumScope.get(targetName) : undefined;
+			if (!targetEnum) {
+				this.warning(
+					location,
+					'invalid-value',
+					`${label} reset references unknown enum '${targetName ?? value}'`
+				);
+				return undefined;
+			}
+			const member = targetEnum.values.find((candidate) => candidate.name === memberName);
+			if (!member) {
+				this.warning(
+					location,
+					'invalid-value',
+					`${label} reset references unknown member '${memberName}' in enum '${targetName}'`
+				);
+				return undefined;
+			}
+			resolved = member.value;
 		}
 		if (
 			resolved !== undefined &&
@@ -498,8 +513,16 @@ class Parser {
 	private resolveEncode(field: PendingField): RdlEnum | undefined {
 		if (!field.encodeName) return undefined;
 		const encode = field.enumScope.get(field.encodeName);
+		if (!encode) {
+			this.warning(
+				field.location,
+				'invalid-value',
+				`Field '${field.name}' references unknown enum '${field.encodeName}'`
+			);
+			return undefined;
+		}
 		const maximum = 2 ** field.width - 1;
-		if (encode?.values.every((member) => member.value >= 0 && member.value <= maximum))
+		if (encode.values.every((member) => member.value >= 0 && member.value <= maximum))
 			return encode;
 		this.warning(
 			field.location,

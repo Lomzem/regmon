@@ -1,4 +1,8 @@
+import { Effect } from 'effect';
 import { afterEach, describe, expect, it, vi } from 'vitest';
+import exampleOutput from '../../../examples/example_output.txt?raw';
+import { SerialReadError } from '$lib/serial/errors';
+import type { SerialConnection } from '$lib/serial/web-serial';
 import { NativeSessionGate, type NativeTransportEvent } from '$lib/transport/tauri';
 import {
 	BrowserMonitor,
@@ -12,9 +16,32 @@ afterEach(() => vi.useRealTimers());
 interface MonitorHarness {
 	_view: BrowserMonitor['view'];
 	native: boolean;
+	connection: SerialConnection | undefined;
 	nativeSession: NativeSessionGate;
 	onNativeEvent(event: NativeTransportEvent): void;
 	poll(): void;
+}
+
+function browserPollingMonitor(readText: SerialConnection['readText']): {
+	monitor: BrowserMonitor;
+	harness: MonitorHarness;
+	writeText: ReturnType<typeof vi.fn>;
+} {
+	const monitor = new BrowserMonitor();
+	const harness = monitor as unknown as MonitorHarness;
+	const writeText = vi.fn(() => Effect.void);
+	Object.assign(harness, {
+		native: false,
+		connection: { port: {} as SerialPort, readText, writeText },
+		_view: {
+			...monitor.view,
+			native: false,
+			status: 'connected',
+			polling: false,
+			intervalMs: 1_000
+		}
+	});
+	return { monitor, harness, writeText };
 }
 
 function nativePollingMonitor(): {
@@ -88,6 +115,34 @@ describe('monitor state policies', () => {
 		expect(poll).not.toHaveBeenCalled();
 		vi.advanceTimersByTime(1_000);
 		expect(poll).toHaveBeenCalledOnce();
+	});
+
+	it('delays a queued browser UART refresh by one interval after failure', async () => {
+		vi.useFakeTimers();
+		const { monitor, harness, writeText } = browserPollingMonitor(
+			Effect.fail(new SerialReadError({ message: 'read failed' }))
+		);
+		harness.poll();
+		monitor.dispatch({ type: 'refresh' });
+
+		await vi.advanceTimersByTimeAsync(0);
+		expect(writeText).toHaveBeenCalledOnce();
+		await vi.advanceTimersByTimeAsync(999);
+		expect(writeText).toHaveBeenCalledOnce();
+		await vi.advanceTimersByTimeAsync(1);
+		expect(writeText).toHaveBeenCalledTimes(2);
+		monitor.close();
+	});
+
+	it('runs a queued browser UART refresh immediately after success', async () => {
+		vi.useFakeTimers();
+		const { monitor, harness, writeText } = browserPollingMonitor(Effect.succeed(exampleOutput));
+		harness.poll();
+		monitor.dispatch({ type: 'refresh' });
+
+		await vi.advanceTimersByTimeAsync(0);
+		expect(writeText).toHaveBeenCalledTimes(2);
+		monitor.close();
 	});
 
 	it('debounces filter persistence and flushes it when closed', () => {

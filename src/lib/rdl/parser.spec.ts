@@ -1,7 +1,8 @@
 import { Effect, Either } from 'effect';
 import { describe, expect, it } from 'vitest';
-import { decodeRegister, decodeRegisterMap } from './decode';
+import { decodeRegister, decodeRegisterMap, indexRegisterMap } from './decode';
 import { parseSystemRdl } from './parser';
+import type { Register } from './types';
 
 const fixture = `
 // A generic byte-oriented register map.
@@ -157,6 +158,24 @@ addrmap map {
 		]);
 	});
 
+	it('distinguishes unknown reset enums, unknown members, and unknown field enums', () => {
+		const source = `enum state_e { IDLE = 0; };
+addrmap map {
+  reg {
+    reset = missing_e::RUN;
+    field { encode = missing_e; } UNKNOWN_ENUM[7:0];
+    field { encode = state_e; reset = state_e::MISSING; } UNKNOWN_MEMBER[7:0];
+  } STATUS @ 1;
+};`;
+		const result = Effect.runSync(parseSystemRdl(source));
+
+		expect(result.warnings.map((warning) => warning.message)).toEqual([
+			"Register 'STATUS' reset references unknown enum 'missing_e'",
+			"Field 'UNKNOWN_ENUM' references unknown enum 'missing_e'",
+			"Field 'UNKNOWN_MEMBER' reset references unknown member 'MISSING' in enum 'state_e'"
+		]);
+	});
+
 	it('returns a located tagged error for malformed input', () => {
 		const result = Effect.runSync(Effect.either(parseSystemRdl('addrmap map { reg {')));
 
@@ -244,5 +263,23 @@ describe('register decoding', () => {
 		]);
 		expect(decodeRegister(map.registers[0], 0x181).value).toBe(0x81);
 		expect(decodeRegisterMap(map, 0xff, 0)).toBeUndefined();
+	});
+
+	it('reuses an index and rebuilds it after register-map mutation', () => {
+		const map = Effect.runSync(parseSystemRdl(fixture));
+		const firstIndex = indexRegisterMap(map);
+		expect(indexRegisterMap(map)).toBe(firstIndex);
+
+		const registers = map.registers as Register[];
+		registers.push({ ...registers[0], name: 'DUPLICATE' });
+		const extendedIndex = indexRegisterMap(map);
+		expect(extendedIndex).not.toBe(firstIndex);
+		expect(extendedIndex.get(0x10)).toBe(registers[0]);
+
+		(registers[0] as { address: number }).address = 0x11;
+		const mutatedIndex = indexRegisterMap(map);
+		expect(mutatedIndex).not.toBe(extendedIndex);
+		expect(mutatedIndex.get(0x10)).toBe(registers[2]);
+		expect(mutatedIndex.get(0x11)).toBe(registers[0]);
 	});
 });

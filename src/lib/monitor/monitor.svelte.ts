@@ -698,7 +698,7 @@ export class BrowserMonitor {
 		});
 		void Effect.runPromiseExit(request).then((exit) => {
 			if (this.closed || connection !== this.connection) return;
-			if (exit._tag === 'Success')
+			if (exit._tag === 'Success') {
 				this.patch({
 					snapshot: exit.value.slice(),
 					snapshotAt: Date.now(),
@@ -706,8 +706,11 @@ export class BrowserMonitor {
 					polling: false,
 					missingAddresses: []
 				});
-			else this.patch({ error: errorFromCause(exit.cause), polling: false });
-			this.finishPoll();
+				this.finishPoll();
+			} else {
+				this.patch({ error: errorFromCause(exit.cause), polling: false });
+				this.finishFailedPoll();
+			}
 		});
 	}
 
