@@ -6,9 +6,10 @@ import type {
 	Register,
 	RegisterField,
 	RegisterMap,
+	SoftwareAccess,
 	SourceLocation
 } from './types';
-import { RdlError } from './types';
+import { isSoftwareAccess, RdlError } from './types';
 
 type TokenKind = 'identifier' | 'number' | 'string' | 'symbol' | 'eof';
 
@@ -21,12 +22,14 @@ type PropertyValue = string | number;
 type Properties = Record<string, PropertyValue>;
 
 type PendingField = Omit<RegisterField, 'reset' | 'encode'> & {
+	readonly location: SourceLocation;
 	readonly resetValue?: PropertyValue;
 	readonly encodeName?: string;
 	readonly enumScope: ReadonlyMap<string, RdlEnum>;
 };
 
 type PendingRegister = Omit<Register, 'reset' | 'fields'> & {
+	readonly location: SourceLocation;
 	readonly resetValue?: PropertyValue;
 	readonly fields: readonly PendingField[];
 };
@@ -200,29 +203,56 @@ class Parser {
 		}
 		if (!this.mapName) this.fail(this.current(), 'Expected an addrmap declaration');
 
+		const addresses = new Set<number>();
 		const registers = this.pendingRegisters
 			.filter((register) => register.address >= 0 && register.address <= 0xff)
-			.map((register): Register => ({
-				name: register.name,
-				displayName: register.displayName,
-				description: register.description,
-				address: register.address,
-				width: register.width,
-				softwareAccess: register.softwareAccess,
-				reset: this.resolveReset(register.resetValue, undefined, this.enums),
-				fields: register.fields.map((field): RegisterField => ({
-					name: field.name,
-					displayName: field.displayName,
-					description: field.description,
-					lowBit: field.lowBit,
-					highBit: field.highBit,
-					width: field.width,
-					mask: field.mask,
-					softwareAccess: field.softwareAccess,
-					reset: this.resolveReset(field.resetValue, field.encodeName, field.enumScope),
-					encode: field.encodeName ? field.enumScope.get(field.encodeName) : undefined
-				}))
-			}))
+			.map((register): Register => {
+				if (addresses.has(register.address)) {
+					throw new ParseFailure(
+						`Duplicate register address 0x${register.address.toString(16).padStart(2, '0')}`,
+						register.location.line,
+						register.location.column
+					);
+				}
+				addresses.add(register.address);
+				return {
+					name: register.name,
+					displayName: register.displayName,
+					description: register.description,
+					address: register.address,
+					width: register.width,
+					softwareAccess: register.softwareAccess,
+					reset: this.resolveReset(
+						register.resetValue,
+						undefined,
+						this.enums,
+						0xff,
+						register.location,
+						`Register '${register.name}'`
+					),
+					fields: register.fields
+						.filter((field) => field.highBit <= 7)
+						.map((field): RegisterField => ({
+							name: field.name,
+							displayName: field.displayName,
+							description: field.description,
+							lowBit: field.lowBit,
+							highBit: field.highBit,
+							width: field.width,
+							mask: field.mask,
+							softwareAccess: field.softwareAccess,
+							reset: this.resolveReset(
+								field.resetValue,
+								field.encodeName,
+								field.enumScope,
+								2 ** field.width - 1,
+								field.location,
+								`Field '${field.name}'`
+							),
+							encode: this.resolveEncode(field)
+						}))
+				};
+			})
 			.sort((left, right) => left.address - right.address);
 
 		return {
@@ -310,12 +340,18 @@ class Parser {
 			);
 		}
 		this.pendingRegisters.push({
+			location: { line: declaration.line, column: declaration.column },
 			name,
 			displayName: this.stringProperty(properties, 'name'),
 			description: this.stringProperty(properties, 'desc'),
 			address,
 			width: 8,
-			softwareAccess: this.propertyText(properties, 'sw') ?? this.propertyText(localDefaults, 'sw'),
+			softwareAccess: this.softwareAccess(
+				properties,
+				localDefaults,
+				declaration,
+				`Register '${name}'`
+			),
 			resetValue: properties.reset,
 			fields
 		});
@@ -350,6 +386,7 @@ class Parser {
 		const width = highBit - lowBit + 1;
 		const mask = highBit < 32 ? ((2 ** width - 1) << lowBit) >>> 0 : 0xffffffff;
 		return {
+			location: { line: declaration.line, column: declaration.column },
 			name,
 			displayName: this.stringProperty(properties, 'name'),
 			description: this.stringProperty(properties, 'desc'),
@@ -357,7 +394,7 @@ class Parser {
 			highBit,
 			width,
 			mask,
-			softwareAccess: this.propertyText(properties, 'sw') ?? this.propertyText(defaults, 'sw'),
+			softwareAccess: this.softwareAccess(properties, defaults, declaration, `Field '${name}'`),
 			resetValue: properties.reset ?? defaults.reset,
 			encodeName: this.propertyText(properties, 'encode'),
 			enumScope
@@ -429,14 +466,47 @@ class Parser {
 	private resolveReset(
 		value: PropertyValue | undefined,
 		enumName: string | undefined,
-		enumScope: ReadonlyMap<string, RdlEnum>
+		enumScope: ReadonlyMap<string, RdlEnum>,
+		maximum: number,
+		location: SourceLocation,
+		label: string
 	): number | undefined {
-		if (typeof value === 'number' || value === undefined) return value;
-		const pieces = value.split('.');
-		const memberName = pieces[pieces.length - 1];
-		const targetEnum =
-			pieces.length > 1 ? enumScope.get(pieces[pieces.length - 2]) : enumScope.get(enumName ?? '');
-		return targetEnum?.values.find((member) => member.name === memberName)?.value;
+		if (value === undefined) return undefined;
+		let resolved: number | undefined;
+		if (typeof value === 'number') resolved = value;
+		else {
+			const pieces = value.split('.');
+			const memberName = pieces[pieces.length - 1];
+			const targetEnum =
+				pieces.length > 1
+					? enumScope.get(pieces[pieces.length - 2])
+					: enumScope.get(enumName ?? '');
+			resolved = targetEnum?.values.find((member) => member.name === memberName)?.value;
+		}
+		if (
+			resolved !== undefined &&
+			Number.isInteger(resolved) &&
+			resolved >= 0 &&
+			resolved <= maximum
+		) {
+			return resolved;
+		}
+		this.warning(location, 'invalid-value', `${label} reset is outside its supported width`);
+		return undefined;
+	}
+
+	private resolveEncode(field: PendingField): RdlEnum | undefined {
+		if (!field.encodeName) return undefined;
+		const encode = field.enumScope.get(field.encodeName);
+		const maximum = 2 ** field.width - 1;
+		if (encode?.values.every((member) => member.value >= 0 && member.value <= maximum))
+			return encode;
+		this.warning(
+			field.location,
+			'invalid-value',
+			`Field '${field.name}' enum '${field.encodeName}' does not fit its width`
+		);
+		return undefined;
 	}
 
 	private skipPropertyDeclaration(): void {
@@ -482,12 +552,24 @@ class Parser {
 		return typeof value === 'string' ? value : undefined;
 	}
 
+	private softwareAccess(
+		properties: Properties,
+		defaults: Properties,
+		location: SourceLocation,
+		label: string
+	): SoftwareAccess | undefined {
+		const value = this.propertyText(properties, 'sw') ?? this.propertyText(defaults, 'sw');
+		if (value === undefined || isSoftwareAccess(value)) return value;
+		this.warning(location, 'invalid-value', `${label} has unsupported software access '${value}'`);
+		return undefined;
+	}
+
 	private stringProperty(properties: Properties, name: string): string | undefined {
 		return this.propertyText(properties, name);
 	}
 
-	private warning(token: Token, code: RdlWarning['code'], message: string): void {
-		this.warnings.push({ code, message, line: token.line, column: token.column });
+	private warning(location: SourceLocation, code: RdlWarning['code'], message: string): void {
+		this.warnings.push({ code, message, line: location.line, column: location.column });
 	}
 
 	private current(): Token {

@@ -43,6 +43,7 @@ import {
 } from './protocol';
 
 export const DEFAULT_POLL_INTERVAL_MS = DEFAULT_UART_POLL_INTERVAL_MS;
+export const FILTER_PERSIST_DELAY_MS = 300;
 export { DEFAULT_OGP_POLL_INTERVAL_MS, OGP_POLL_INTERVALS, UART_POLL_INTERVALS };
 export type TransportMode = 'uart' | 'ogp';
 export type ConnectionStatus = 'unsupported' | 'disconnected' | 'connecting' | 'connected';
@@ -179,6 +180,22 @@ function integerInRange(value: number, fallback: number, minimum: number, maximu
 		: fallback;
 }
 
+export function disconnectedStatus(
+	mode: TransportMode,
+	native: boolean,
+	serialAvailable: boolean
+): ConnectionStatus {
+	return !native && (mode === 'ogp' || !serialAvailable) ? 'unsupported' : 'disconnected';
+}
+
+export function pollDelayAfterResult(
+	refreshQueued: boolean,
+	intervalMs: number,
+	failed: boolean
+): number {
+	return !failed && refreshQueued ? 0 : intervalMs;
+}
+
 export class BrowserMonitor {
 	private _view = $state.raw<MonitorView>(immutableView(initialView));
 	private readonly rawLog = new RawLogBuffer();
@@ -189,6 +206,7 @@ export class BrowserMonitor {
 	private connection: SerialConnection | undefined;
 	private connectionFiber: Fiber.RuntimeFiber<void, never> | undefined;
 	private pollTimer: ReturnType<typeof setTimeout> | undefined;
+	private persistTimer: ReturnType<typeof setTimeout> | undefined;
 	private readonly intervals = {
 		uart: DEFAULT_UART_POLL_INTERVAL_MS,
 		ogp: DEFAULT_OGP_POLL_INTERVAL_MS
@@ -197,6 +215,7 @@ export class BrowserMonitor {
 	private readonly nativeSession = new NativeSessionGate();
 	private closed = false;
 	private refreshQueued = false;
+	private nativeScanFailed = false;
 	private readonly serialChange = () => this.refreshPorts();
 
 	constructor() {
@@ -236,7 +255,7 @@ export class BrowserMonitor {
 				if (action.mode !== this._view.mode) this.disconnect();
 				this.patch({
 					mode: action.mode,
-					status: !this.native && action.mode === 'ogp' ? 'unsupported' : 'disconnected',
+					status: disconnectedStatus(action.mode, this.native, this.serial !== undefined),
 					intervalMs: this.intervals[action.mode]
 				});
 				this.persist();
@@ -296,7 +315,7 @@ export class BrowserMonitor {
 				break;
 			case 'set-filter':
 				this.patch({ filter: action.filter });
-				this.persist();
+				this.schedulePersist();
 				break;
 			case 'set-rdl-source':
 				this.setRdlSource(action.source, action.fileName);
@@ -318,6 +337,7 @@ export class BrowserMonitor {
 
 	close(): void {
 		if (this.closed) return;
+		this.flushPersist();
 		this.closed = true;
 		this.serial?.removeEventListener('connect', this.serialChange);
 		this.serial?.removeEventListener('disconnect', this.serialChange);
@@ -381,11 +401,12 @@ export class BrowserMonitor {
 			rdlSource: value.rdlSource,
 			rdlFileName: value.rdlFileName,
 			registerMap: value.registerMap,
-			status: !this.native && mode === 'ogp' ? 'unsupported' : this._view.status
+			status: disconnectedStatus(mode, this.native, this.serial !== undefined)
 		});
 	}
 
 	private persist(): void {
+		this.clearPersistTimer();
 		if (!this.storage) return;
 		const settings: MonitorSettings = {
 			mode: this._view.mode,
@@ -403,6 +424,25 @@ export class BrowserMonitor {
 			registerMap: this._view.registerMap
 		};
 		this.run(saveSettings(this.storage, settings));
+	}
+
+	private schedulePersist(): void {
+		this.clearPersistTimer();
+		this.persistTimer = setTimeout(() => {
+			this.persistTimer = undefined;
+			this.persist();
+		}, FILTER_PERSIST_DELAY_MS);
+	}
+
+	private flushPersist(): void {
+		if (this.persistTimer === undefined) return;
+		this.clearPersistTimer();
+		this.persist();
+	}
+
+	private clearPersistTimer(): void {
+		if (this.persistTimer !== undefined) clearTimeout(this.persistTimer);
+		this.persistTimer = undefined;
 	}
 
 	private refreshPorts(): void {
@@ -484,7 +524,7 @@ export class BrowserMonitor {
 			})
 				.then((generation) => {
 					if (this.closed || !this.nativeSession.accept(attempt, generation))
-						void disconnectNativeTransport(generation);
+						void disconnectNativeTransport(generation).catch(() => undefined);
 				})
 				.catch((error) => {
 					if (this.nativeSession.isCurrent(attempt))
@@ -527,10 +567,12 @@ export class BrowserMonitor {
 				if (event.status === 'connected') this.schedulePoll(0);
 				if (event.status === 'disconnected') {
 					this.clearPollTimer();
+					this.nativeScanFailed = false;
 					this.patch({ polling: false });
 				}
 				break;
 			case 'scanStarted':
+				this.nativeScanFailed = false;
 				this.patch({
 					previousSnapshot: this._view.snapshot,
 					polling: true,
@@ -547,24 +589,31 @@ export class BrowserMonitor {
 				});
 				break;
 			case 'scanComplete':
-				this.patch({ polling: false, missingAddresses: event.missing, snapshotAt: Date.now() });
-				if (this.refreshQueued) {
-					this.refreshQueued = false;
-					this.schedulePoll(0);
-				} else this.schedulePoll(this._view.intervalMs);
+				this.patch({ missingAddresses: event.missing, snapshotAt: Date.now() });
+				if (this.nativeScanFailed) {
+					this.nativeScanFailed = false;
+					this.patch({ polling: false });
+				} else this.finishPoll();
 				break;
 			case 'log':
 				this.patch({ rawLog: this.rawLog.append(event.text) });
 				break;
 			case 'error':
-				this.patch({
-					error: {
-						_tag: event.error.kind,
-						message: event.error.message,
-						recoverable: event.error.recoverable
-					},
-					polling: false
-				});
+				{
+					const terminal = event.error.kind !== 'scanBusy';
+					this.patch({
+						error: {
+							_tag: event.error.kind,
+							message: event.error.message,
+							recoverable: event.error.recoverable
+						},
+						polling: terminal ? false : this._view.polling
+					});
+					if (terminal) {
+						this.nativeScanFailed = true;
+						this.finishFailedPoll();
+					}
+				}
 				break;
 		}
 	}
@@ -573,12 +622,10 @@ export class BrowserMonitor {
 		const nativeGeneration = this.nativeSession.invalidate();
 		this.clearPollTimer();
 		this.refreshQueued = false;
+		this.nativeScanFailed = false;
 		this.connection = undefined;
 		this.patch({
-			status:
-				!this.native && (this._view.mode === 'ogp' || !this.serial)
-					? 'unsupported'
-					: 'disconnected',
+			status: disconnectedStatus(this._view.mode, this.native, this.serial !== undefined),
 			polling: false
 		});
 		if (this.native && nativeGeneration !== null)
@@ -610,15 +657,36 @@ export class BrowserMonitor {
 		this.pollTimer = undefined;
 	}
 
+	private finishPoll(): void {
+		const delay = pollDelayAfterResult(this.refreshQueued, this._view.intervalMs, false);
+		this.refreshQueued = false;
+		this.patch({ polling: false });
+		this.schedulePoll(delay);
+	}
+
+	private finishFailedPoll(): void {
+		const delay = pollDelayAfterResult(this.refreshQueued, this._view.intervalMs, true);
+		this.refreshQueued = false;
+		this.patch({ polling: false });
+		this.schedulePoll(delay);
+	}
+
+	private failNativePoll(error: unknown): void {
+		this.nativeScanFailed = false;
+		this.patch({ error: transportFailure(error) });
+		this.finishFailedPoll();
+	}
+
 	private poll(): void {
 		if (this._view.status !== 'connected' || this._view.polling) return;
 		if (this.native) {
 			const generation = this.nativeSession.generation;
 			if (generation === null) return;
 			this.patch({ polling: true, error: null });
-			void scanNativeTransport(generation, []).catch((error) =>
-				this.patch({ polling: false, error: transportFailure(error) })
-			);
+			void scanNativeTransport(generation, []).catch((error) => {
+				if (this.closed || generation !== this.nativeSession.generation) return;
+				this.failNativePoll(error);
+			});
 			return;
 		}
 		const connection = this.connection;
@@ -639,10 +707,7 @@ export class BrowserMonitor {
 					missingAddresses: []
 				});
 			else this.patch({ error: errorFromCause(exit.cause), polling: false });
-			if (this.refreshQueued) {
-				this.refreshQueued = false;
-				this.schedulePoll(0);
-			} else this.schedulePoll(this._view.intervalMs);
+			this.finishPoll();
 		});
 	}
 

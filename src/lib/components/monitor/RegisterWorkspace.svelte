@@ -19,6 +19,7 @@
 	import { Popover, PopoverContent, PopoverTrigger } from '$lib/components/ui/popover';
 	import { Tabs, TabsContent, TabsList, TabsTrigger } from '$lib/components/ui/tabs';
 	import { getMonitorContext } from '$lib/monitor/context';
+	import { indexRegisters } from '$lib/rdl/decode';
 	import {
 		formatUpdateTime,
 		isStaleAddress,
@@ -34,11 +35,11 @@
 	let viewportWidth = $state(1024);
 	const addresses = Array.from({ length: 256 }, (_, address) => address);
 	const nibbles = Array.from({ length: 16 }, (_, nibble) => nibble.toString(16).toUpperCase());
+	let registersByAddress = $derived(indexRegisters(view.registerMap?.registers ?? []));
+	let staleAddresses = $derived(new Set(view.missingAddresses));
 	let watchOptions = $derived(
 		addresses.map((address) => {
-			const register = view.registerMap?.registers.find(
-				(candidate) => candidate.address === address
-			);
+			const register = registersByAddress.get(address);
 			const fields = register?.fields
 				.flatMap((field) => [field.name, field.displayName, field.description])
 				.filter(Boolean)
@@ -72,7 +73,7 @@
 						address,
 						view.snapshot?.[address] ?? 0,
 						view.filter,
-						view.registerMap
+						registersByAddress.get(address)
 					)
 				).length
 			: 0
@@ -195,12 +196,12 @@
 									{@const changed =
 										view.previousSnapshot !== null && view.previousSnapshot[address] !== value}
 									{@const watched = view.watchlist.includes(address)}
-									{@const stale = isStaleAddress(address, view.missingAddresses)}
+									{@const stale = isStaleAddress(address, staleAddresses)}
 									{@const matches = registerMatchesFilter(
 										address,
 										value,
 										view.filter,
-										view.registerMap
+										registersByAddress.get(address)
 									)}
 									<button
 										type="button"
@@ -305,11 +306,9 @@
 				{:else}
 					<div class="grid gap-2 sm:grid-cols-2 xl:grid-cols-4">
 						{#each view.watchlist as address (address)}
-							{@const register = view.registerMap?.registers.find(
-								(candidate) => candidate.address === address
-							)}
+							{@const register = registersByAddress.get(address)}
 							{@const value = view.snapshot?.[address] ?? 0}
-							{@const stale = isStaleAddress(address, view.missingAddresses)}
+							{@const stale = isStaleAddress(address, staleAddresses)}
 							<div class="group relative">
 								<button
 									type="button"
@@ -326,7 +325,7 @@
 											>{register?.displayName ?? register?.name ?? 'Unmapped register'}</span
 										>
 										{#if stale}<Badge
-												class="mt-1 border-amber-500/50 text-amber-300"
+												class="mt-1 border-amber-500/50 text-amber-700 dark:text-amber-300"
 												variant="outline">Stale</Badge
 											>{/if}
 									</span>

@@ -16,6 +16,14 @@ export type DecodedRegister = {
 	readonly fields: readonly DecodedField[];
 };
 
+export function indexRegisters(registers: readonly Register[]): ReadonlyMap<number, Register> {
+	const indexed = new Map<number, Register>();
+	for (const register of registers) {
+		if (!indexed.has(register.address)) indexed.set(register.address, register);
+	}
+	return indexed;
+}
+
 export function decodeRegister(register: Register, byte: number): DecodedRegister {
 	const value = byte & 0xff;
 	return {
@@ -42,6 +50,6 @@ export function decodeRegisterMap(
 	address: number,
 	byte: number
 ): DecodedRegister | undefined {
-	const register = registerMap.registers.find((candidate) => candidate.address === address);
+	const register = indexRegisters(registerMap.registers).get(address);
 	return register && decodeRegister(register, byte);
 }

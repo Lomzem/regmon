@@ -1,4 +1,4 @@
-import type { RegisterMap } from '$lib/rdl/types';
+import type { Register } from '$lib/rdl/types';
 
 interface StatusView {
 	readonly status: 'unsupported' | 'disconnected' | 'connecting' | 'connected';
@@ -44,13 +44,12 @@ export function registerMatchesFilter(
 	address: number,
 	value: number,
 	filter: string,
-	registerMap: RegisterMap | null
+	register: Register | undefined
 ): boolean {
 	const needle = filter.trim().toLowerCase();
 	if (!needle) return true;
 	const hexAddress = address.toString(16).padStart(2, '0');
 	const hexValue = value.toString(16).padStart(2, '0');
-	const register = registerMap?.registers.find((candidate) => candidate.address === address);
 	const fields = register?.fields
 		.flatMap((field) => [field.name, field.displayName, field.description])
 		.filter(Boolean)
@@ -72,8 +71,8 @@ export function registerMatchesFilter(
 	return text.includes(needle);
 }
 
-export function isStaleAddress(address: number, missingAddresses: readonly number[]): boolean {
-	return missingAddresses.includes(address);
+export function isStaleAddress(address: number, staleAddresses: ReadonlySet<number>): boolean {
+	return staleAddresses.has(address);
 }
 
 export async function copyToClipboard(

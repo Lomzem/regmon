@@ -24,7 +24,8 @@
 	let address = $derived(view.selectedAddress);
 	let value = $derived(address === null ? 0 : (view.snapshot?.[address] ?? 0));
 	let watched = $derived(address !== null && view.watchlist.includes(address));
-	let stale = $derived(address !== null && isStaleAddress(address, view.missingAddresses));
+	let staleAddresses = $derived(new Set(view.missingAddresses));
+	let stale = $derived(address !== null && isStaleAddress(address, staleAddresses));
 	let base = $state<'hex' | 'decimal' | 'binary'>('hex');
 	let rdlFileInput = $state<HTMLInputElement | null>(null);
 	let decoded = $derived(
@@ -85,8 +86,9 @@
 			<div class="space-y-2">
 				<DialogTitle class="flex flex-wrap items-center gap-2 font-sans">
 					<Cpu class="text-primary" /> Register {address === null ? '--' : `0x${hex(address)}`}
-					{#if stale}<Badge class="border-amber-500/50 text-amber-300" variant="outline"
-							>Stale</Badge
+					{#if stale}<Badge
+							class="border-amber-500/50 text-amber-700 dark:text-amber-300"
+							variant="outline">Stale</Badge
 						>{/if}
 				</DialogTitle>
 				<DialogDescription
@@ -110,7 +112,7 @@
 				class={[
 					'flex flex-wrap items-center justify-between gap-2 rounded-md border px-3 py-2 text-xs',
 					stale
-						? 'border-amber-500/50 bg-amber-500/10 text-amber-200'
+						? 'border-amber-500/50 bg-amber-500/10 text-amber-800 dark:text-amber-200'
 						: 'border-border bg-muted/30 text-muted-foreground'
 				]}
 			>

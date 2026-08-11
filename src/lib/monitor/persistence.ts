@@ -1,5 +1,10 @@
 import { Data, Effect } from 'effect';
-import type { RegisterMap } from '$lib/rdl/types';
+import {
+	isSoftwareAccess,
+	type Register,
+	type RegisterField,
+	type RegisterMap
+} from '$lib/rdl/types';
 
 const STORAGE_KEY = 'regmon.monitor.v1';
 
@@ -45,6 +50,116 @@ function supportedInterval(value: unknown, values: readonly number[], fallback: 
 	return values.includes(interval) ? interval : fallback;
 }
 
+function isOptionalString(value: unknown): boolean {
+	return value === undefined || typeof value === 'string';
+}
+
+function isOptionalReset(value: unknown, maximum: number): boolean {
+	return (
+		value === undefined ||
+		(Number.isInteger(value) && (value as number) >= 0 && (value as number) <= maximum)
+	);
+}
+
+function isRegisterField(value: unknown): value is RegisterField {
+	if (typeof value !== 'object' || value === null) return false;
+	const field = value as Partial<RegisterField>;
+	if (
+		!Number.isInteger(field.lowBit) ||
+		!Number.isInteger(field.highBit) ||
+		!Number.isInteger(field.width) ||
+		!Number.isInteger(field.mask)
+	) {
+		return false;
+	}
+	const lowBit = field.lowBit as number;
+	const highBit = field.highBit as number;
+	const width = field.width as number;
+	const mask = field.mask as number;
+	const maximum = 2 ** width - 1;
+	return (
+		typeof field.name === 'string' &&
+		isOptionalString(field.displayName) &&
+		isOptionalString(field.description) &&
+		lowBit >= 0 &&
+		highBit <= 7 &&
+		lowBit <= highBit &&
+		width === highBit - lowBit + 1 &&
+		mask === maximum << lowBit &&
+		(field.softwareAccess === undefined || isSoftwareAccess(field.softwareAccess)) &&
+		isOptionalReset(field.reset, maximum) &&
+		(field.encode === undefined ||
+			(typeof field.encode === 'object' &&
+				field.encode !== null &&
+				typeof field.encode.name === 'string' &&
+				Array.isArray(field.encode.values) &&
+				field.encode.values.every(
+					(entry) =>
+						typeof entry === 'object' &&
+						entry !== null &&
+						typeof entry.name === 'string' &&
+						Number.isInteger(entry.value) &&
+						entry.value >= 0 &&
+						entry.value <= maximum &&
+						isOptionalString(entry.displayName) &&
+						isOptionalString(entry.description)
+				)))
+	);
+}
+
+function isRegister(value: unknown): value is Register {
+	if (typeof value !== 'object' || value === null) return false;
+	const register = value as Partial<Register>;
+	return (
+		typeof register.name === 'string' &&
+		isOptionalString(register.displayName) &&
+		isOptionalString(register.description) &&
+		Number.isInteger(register.address) &&
+		register.address! >= 0 &&
+		register.address! <= 0xff &&
+		register.width === 8 &&
+		(register.softwareAccess === undefined || isSoftwareAccess(register.softwareAccess)) &&
+		isOptionalReset(register.reset, 0xff) &&
+		Array.isArray(register.fields) &&
+		register.fields.every(isRegisterField)
+	);
+}
+
+function isWarning(value: unknown): boolean {
+	if (typeof value !== 'object' || value === null) return false;
+	const warning = value as Record<string, unknown>;
+	return (
+		(warning.code === 'unsupported' ||
+			warning.code === 'out-of-range' ||
+			warning.code === 'invalid-value') &&
+		typeof warning.message === 'string' &&
+		Number.isInteger(warning.line) &&
+		(warning.line as number) >= 1 &&
+		Number.isInteger(warning.column) &&
+		(warning.column as number) >= 1
+	);
+}
+
+function isRegisterMap(value: unknown): value is RegisterMap {
+	if (typeof value !== 'object' || value === null) return false;
+	const map = value as Partial<RegisterMap>;
+	const addresses = new Set<number>();
+	return (
+		typeof map.name === 'string' &&
+		isOptionalString(map.displayName) &&
+		isOptionalString(map.description) &&
+		map.addressWidth === 8 &&
+		Array.isArray(map.registers) &&
+		map.registers.every((register) => {
+			if (!isRegister(register) || addresses.has(register.address)) return false;
+			addresses.add(register.address);
+			return true;
+		}) &&
+		Array.isArray(map.warnings) &&
+		map.warnings.every(isWarning)
+	);
+}
+
 export function normalizeSettings(value: LegacySettings): MonitorSettings {
 	const mode = value.mode === 'ogp' ? 'ogp' : 'uart';
 	const legacyUart = mode === 'uart' ? value.intervalMs : undefined;
@@ -88,7 +203,7 @@ export function normalizeSettings(value: LegacySettings): MonitorSettings {
 		filter: typeof value.filter === 'string' ? value.filter : '',
 		rdlSource: typeof value.rdlSource === 'string' ? value.rdlSource : '',
 		rdlFileName: typeof value.rdlFileName === 'string' ? value.rdlFileName : '',
-		registerMap: value.registerMap ?? null
+		registerMap: isRegisterMap(value.registerMap) ? value.registerMap : null
 	};
 }
 

@@ -22,6 +22,13 @@ export type RdlEnum = {
 	readonly values: readonly EnumValue[];
 };
 
+export const SOFTWARE_ACCESS_VALUES = ['na', 'r', 'w', 'rw', 'rw1', 'w1'] as const;
+export type SoftwareAccess = (typeof SOFTWARE_ACCESS_VALUES)[number];
+
+export function isSoftwareAccess(value: unknown): value is SoftwareAccess {
+	return SOFTWARE_ACCESS_VALUES.some((candidate) => candidate === value);
+}
+
 export type RegisterField = {
 	readonly name: string;
 	readonly displayName?: string;
@@ -30,7 +37,7 @@ export type RegisterField = {
 	readonly highBit: number;
 	readonly width: number;
 	readonly mask: number;
-	readonly softwareAccess?: string;
+	readonly softwareAccess?: SoftwareAccess;
 	readonly reset?: number;
 	readonly encode?: RdlEnum;
 };
@@ -41,7 +48,7 @@ export type Register = {
 	readonly description?: string;
 	readonly address: number;
 	readonly width: 8;
-	readonly softwareAccess?: string;
+	readonly softwareAccess?: SoftwareAccess;
 	readonly reset?: number;
 	readonly fields: readonly RegisterField[];
 };

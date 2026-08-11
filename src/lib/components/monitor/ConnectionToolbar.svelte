@@ -245,7 +245,7 @@
 						class="min-h-11 sm:min-h-9"
 						onclick={() => monitor.dispatch({ type: 'connect' })}
 						disabled={(view.mode === 'uart' ? !view.selectedPortId : !view.host.trim()) ||
-							slotError ||
+							(view.mode === 'ogp' && slotError) ||
 							view.status === 'connecting' ||
 							view.status === 'unsupported'}
 					>

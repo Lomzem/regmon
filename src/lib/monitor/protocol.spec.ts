@@ -16,12 +16,19 @@ function dump(): string {
 
 describe('requestRegisterSnapshot', () => {
 	it('parses the checked-in UART example directly', async () => {
+		const chunks = [exampleOutput];
 		const connection = {
-			readText: Effect.succeed(exampleOutput),
+			get readText() {
+				const chunk = chunks.shift();
+				return chunk === undefined
+					? Effect.fail(new SerialReadError({ message: 'example output exhausted' }))
+					: Effect.succeed(chunk);
+			},
 			writeText: () => Effect.void
 		};
 		const snapshot = await Effect.runPromise(requestRegisterSnapshot(connection));
 		expect(snapshot).toHaveLength(256);
+		expect(snapshot[0xc0]).toBe(0x3a);
 	});
 
 	it('writes the command and ignores noise and chunk boundaries', async () => {

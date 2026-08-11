@@ -77,12 +77,110 @@ describe('parseSystemRdl', () => {
 		]);
 	});
 
+	it('omits fields outside the 8-bit register profile', () => {
+		const source = `addrmap map {
+  reg {
+    field {} VALID[0];
+    field {} OUTSIDE[8];
+  } STATUS @ 1;
+};`;
+		const result = Effect.runSync(parseSystemRdl(source));
+
+		expect(result.registers[0].fields.map((field) => field.name)).toEqual(['VALID']);
+		expect(result.warnings).toContainEqual(
+			expect.objectContaining({
+				code: 'out-of-range',
+				message: "Field 'OUTSIDE' extends beyond an 8-bit register"
+			})
+		);
+	});
+
+	it('omits an enum binding when a member is wider than its field', () => {
+		const source = `enum mode_e {
+  IDLE = 0;
+  WIDE = 4;
+};
+addrmap map {
+  reg { field { encode = mode_e; } MODE[1:0]; } STATUS @ 1;
+};`;
+		const result = Effect.runSync(parseSystemRdl(source));
+
+		expect(result.registers[0].fields[0].encode).toBeUndefined();
+		expect(result.warnings).toContainEqual(
+			expect.objectContaining({
+				code: 'invalid-value',
+				message: "Field 'MODE' enum 'mode_e' does not fit its width"
+			})
+		);
+	});
+
+	it('omits register and field resets outside their widths', () => {
+		const source = `addrmap map {
+  reg {
+    reset = 256;
+    field { reset = 4; } SMALL[1:0];
+    field { reset = 3; } VALID[1:0];
+  } STATUS @ 1;
+};`;
+		const result = Effect.runSync(parseSystemRdl(source));
+
+		expect(result.registers[0].reset).toBeUndefined();
+		expect(result.registers[0].fields.map((field) => field.reset)).toEqual([undefined, 3]);
+		expect(result.warnings).toEqual([
+			expect.objectContaining({
+				code: 'invalid-value',
+				message: "Register 'STATUS' reset is outside its supported width"
+			}),
+			expect.objectContaining({
+				code: 'invalid-value',
+				message: "Field 'SMALL' reset is outside its supported width"
+			})
+		]);
+	});
+
+	it('warns and omits unsupported access and unresolved enum references', () => {
+		const source = `addrmap map {
+  reg {
+    sw = rx;
+    field { sw = rx; encode = missing_e; } VALUE[7:0];
+  } STATUS @ 1;
+};`;
+		const result = Effect.runSync(parseSystemRdl(source));
+
+		expect(result.registers[0].softwareAccess).toBeUndefined();
+		expect(result.registers[0].fields[0].softwareAccess).toBeUndefined();
+		expect(result.registers[0].fields[0].encode).toBeUndefined();
+		expect(result.warnings.map((warning) => warning.code)).toEqual([
+			'invalid-value',
+			'invalid-value',
+			'invalid-value'
+		]);
+	});
+
 	it('returns a located tagged error for malformed input', () => {
 		const result = Effect.runSync(Effect.either(parseSystemRdl('addrmap map { reg {')));
 
 		expect(Either.isLeft(result)).toBe(true);
 		if (Either.isLeft(result)) {
 			expect(result.left).toMatchObject({ _tag: 'RdlError', line: 1 });
+		}
+	});
+
+	it('rejects duplicate register addresses', () => {
+		const source = `addrmap map {
+  reg { field {} A[0]; } FIRST @ 1;
+  reg { field {} B[0]; } SECOND @ 1;
+};`;
+		const result = Effect.runSync(Effect.either(parseSystemRdl(source)));
+
+		expect(Either.isLeft(result)).toBe(true);
+		if (Either.isLeft(result)) {
+			expect(result.left).toMatchObject({
+				_tag: 'RdlError',
+				message: 'Duplicate register address 0x01',
+				line: 3,
+				column: 3
+			});
 		}
 	});
 

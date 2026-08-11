@@ -213,6 +213,28 @@ fn send_event(channel: &Channel<TransportEvent>, event: TransportEvent) {
     let _ = channel.send(event);
 }
 
+fn send_scan_failure(
+    channel: &Channel<TransportEvent>,
+    generation: u64,
+    error: AppError,
+    missing: Vec<u8>,
+) {
+    send_event(
+        channel,
+        TransportEvent::Error {
+            generation,
+            error: error.payload(),
+        },
+    );
+    send_event(
+        channel,
+        TransportEvent::ScanComplete {
+            generation,
+            missing,
+        },
+    );
+}
+
 fn serial_endpoints() -> Result<Vec<SerialEndpoint>, AppError> {
     let ports =
         serialport::available_ports().map_err(|error| AppError::Serial(error.to_string()))?;
@@ -367,15 +389,6 @@ async fn scan_transport(
     addresses: Vec<u8>,
     state: tauri::State<'_, AppState>,
 ) -> Result<(), AppError> {
-    let addresses = if addresses.is_empty() {
-        (0..=u8::MAX).collect()
-    } else {
-        addresses
-            .into_iter()
-            .collect::<BTreeSet<_>>()
-            .into_iter()
-            .collect()
-    };
     let sender = {
         let guard = state.session.lock().expect("session mutex poisoned");
         let session = guard.as_ref().ok_or(AppError::NoSession)?;
@@ -387,6 +400,8 @@ async fn scan_transport(
             ControlSender::Blocking(sender) => EitherSender::Blocking(sender.clone()),
         }
     };
+    let addresses =
+        normalize_scan_addresses(matches!(&sender, EitherSender::Blocking(_)), addresses)?;
     match sender {
         EitherSender::Async(sender) => sender
             .send(Control::Scan(addresses))
@@ -396,6 +411,23 @@ async fn scan_transport(
             .send(Control::Scan(addresses))
             .map_err(|_| AppError::NoSession),
     }
+}
+
+fn normalize_scan_addresses(uart: bool, addresses: Vec<u8>) -> Result<Vec<u8>, AppError> {
+    if uart && !addresses.is_empty() {
+        return Err(AppError::InvalidConfig(
+            "UART supports full register scans only".to_owned(),
+        ));
+    }
+    Ok(if addresses.is_empty() {
+        (0..=u8::MAX).collect()
+    } else {
+        addresses
+            .into_iter()
+            .collect::<BTreeSet<_>>()
+            .into_iter()
+            .collect()
+    })
 }
 
 enum EitherSender {
@@ -440,8 +472,12 @@ async fn validate_config(config: &ConnectionConfig) -> Result<(), AppError> {
         ConnectionConfig::Ogp {
             host, port, slot, ..
         } => {
-            let host = host.trim();
-            if host.is_empty() || host.len() > 253 || host.contains(['/', '\\', '\0']) {
+            let trimmed_host = host.trim();
+            if trimmed_host.len() != host.len()
+                || trimmed_host.is_empty()
+                || trimmed_host.len() > 253
+                || trimmed_host.contains(['/', '\\', '\0'])
+            {
                 return Err(AppError::InvalidConfig("invalid host".to_owned()));
             }
             if *port == 0 {
@@ -454,8 +490,8 @@ async fn validate_config(config: &ConnectionConfig) -> Result<(), AppError> {
                     "slot must be 1 through 20".to_owned(),
                 ));
             }
-            if IpAddr::from_str(host).is_err() {
-                timeout(CONNECT_TIMEOUT, lookup_host((host, *port)))
+            if IpAddr::from_str(trimmed_host).is_err() {
+                timeout(CONNECT_TIMEOUT, lookup_host((trimmed_host, *port)))
                     .await
                     .map_err(|_| AppError::Timeout("host lookup"))?
                     .map_err(|error| AppError::Network(error.to_string()))?
@@ -543,23 +579,15 @@ fn run_uart_worker(
                         },
                     );
                     if let Err(error) = port.write_all(UART_COMMAND) {
-                        send_event(
+                        send_scan_failure(
                             &events,
-                            TransportEvent::Error {
-                                generation,
-                                error: AppError::Serial(error.to_string()).payload(),
-                            },
+                            generation,
+                            AppError::Serial(error.to_string()),
+                            active_addresses.clone(),
                         );
                         scanning = false;
                         scan_deadline = None;
                         parser.reset();
-                        send_event(
-                            &events,
-                            TransportEvent::ScanComplete {
-                                generation,
-                                missing: active_addresses.clone(),
-                            },
-                        );
                     }
                 }
             }
@@ -607,13 +635,22 @@ fn run_uart_worker(
             Ok(_) => {}
             Err(error) if error.kind() == std::io::ErrorKind::TimedOut => {}
             Err(error) => {
-                send_event(
-                    &events,
-                    TransportEvent::Error {
+                if scanning {
+                    send_scan_failure(
+                        &events,
                         generation,
-                        error: AppError::Serial(error.to_string()).payload(),
-                    },
-                );
+                        AppError::Serial(error.to_string()),
+                        active_addresses.clone(),
+                    );
+                } else {
+                    send_event(
+                        &events,
+                        TransportEvent::Error {
+                            generation,
+                            error: AppError::Serial(error.to_string()).payload(),
+                        },
+                    );
+                }
                 break;
             }
         }
@@ -621,19 +658,11 @@ fn run_uart_worker(
             scanning = false;
             scan_deadline = None;
             parser.reset();
-            send_event(
+            send_scan_failure(
                 &events,
-                TransportEvent::ScanComplete {
-                    generation,
-                    missing: active_addresses.clone(),
-                },
-            );
-            send_event(
-                &events,
-                TransportEvent::Error {
-                    generation,
-                    error: AppError::Timeout("UART register dump").payload(),
-                },
+                generation,
+                AppError::Timeout("UART register dump"),
+                active_addresses.clone(),
             );
         }
     }
@@ -821,8 +850,7 @@ async fn run_ogp_actor(
                 print_parser.reset();
                 if let Some(finished) = scan.take() {
                     let missing = finished.missing.into_iter().collect();
-                    send_event(&events, TransportEvent::ScanComplete { generation, missing });
-                    send_event(&events, TransportEvent::Error { generation, error: AppError::Timeout("OGP command acknowledgment").payload() });
+                    send_scan_failure(&events, generation, AppError::Timeout("OGP command acknowledgment"), missing);
                 }
             },
             _ = tokio::time::sleep_until(total), if scan_deadline.is_some() => {
@@ -836,8 +864,7 @@ async fn run_ogp_actor(
                 } else {
                     pending_scan.take().unwrap_or_default()
                 };
-                send_event(&events, TransportEvent::ScanComplete { generation, missing });
-                send_event(&events, TransportEvent::Error { generation, error: AppError::Timeout("OGP register scan").payload() });
+                send_scan_failure(&events, generation, AppError::Timeout("OGP register scan"), missing);
             }
         }
     }
@@ -1175,6 +1202,41 @@ mod tests {
 
         assert_eq!(deferred, [expected_unrelated, expected_wrong_oid]);
         server.await.unwrap();
+    }
+
+    #[tokio::test]
+    async fn ogp_config_rejects_whitespace_padded_hosts() {
+        let config = ConnectionConfig::Ogp {
+            host: " 127.0.0.1 ".to_owned(),
+            port: 5253,
+            slot: 1,
+            force: false,
+        };
+
+        assert!(matches!(
+            validate_config(&config).await,
+            Err(AppError::InvalidConfig(message)) if message == "invalid host"
+        ));
+    }
+
+    #[test]
+    fn uart_scan_requests_are_full_scan_only() {
+        let full_scan = normalize_scan_addresses(true, Vec::new()).unwrap();
+        assert_eq!(full_scan.len(), 256);
+        assert_eq!(full_scan[0], 0);
+        assert_eq!(full_scan[255], 255);
+        assert!(matches!(
+            normalize_scan_addresses(true, vec![1, 2]),
+            Err(AppError::InvalidConfig(message)) if message == "UART supports full register scans only"
+        ));
+    }
+
+    #[test]
+    fn ogp_scan_requests_are_sorted_and_deduplicated() {
+        assert_eq!(
+            normalize_scan_addresses(false, vec![3, 1, 3]).unwrap(),
+            [1, 3]
+        );
     }
 
     #[test]
