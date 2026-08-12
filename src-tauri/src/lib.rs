@@ -1,6 +1,6 @@
 mod protocol;
 
-use std::collections::{BTreeMap, BTreeSet};
+use std::collections::BTreeMap;
 use std::io::{Read, Write};
 use std::net::IpAddr;
 use std::str::FromStr;
@@ -9,7 +9,7 @@ use std::sync::{mpsc as std_mpsc, Mutex};
 use std::thread;
 use std::time::{Duration, Instant as StdInstant};
 
-use protocol::{Frame, FrameDecoder, PrintParser, ScanState};
+use protocol::{DumpChunk, Frame, FrameDecoder, PrintParser};
 use serde::{Deserialize, Serialize};
 use tauri::ipc::Channel;
 use thiserror::Error;
@@ -23,34 +23,105 @@ const CONNECT_TIMEOUT: Duration = Duration::from_secs(5);
 const HANDSHAKE_TIMEOUT: Duration = Duration::from_secs(3);
 const ACK_TIMEOUT: Duration = Duration::from_secs(2);
 const UART_SCAN_TIMEOUT: Duration = Duration::from_secs(3);
-const OGP_SCAN_TIMEOUT: Duration = Duration::from_secs(120);
-const OGP_QUIET_DRAIN_MAX: Duration = Duration::from_secs(1);
+const OGP_DUMP_TIMEOUT: Duration = Duration::from_secs(3);
+const OGP_SCAN_TIMEOUT: Duration = Duration::from_secs(10);
+const OGP_INITIAL_DRAIN: Duration = Duration::from_millis(350);
+const OGP_MAX_RETRIES: u8 = 2;
 const MAX_DEFERRED_HANDSHAKE_FRAMES: usize = 64;
 const MAX_DEFERRED_HANDSHAKE_BYTES: usize = 64 * 1024;
 const UART_COMMAND: &[u8] = b"r 1 1\r\n";
 
-#[derive(Debug)]
-struct QuietDrain {
-    deadline: Instant,
-    limit: Instant,
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum ChunkResult {
+    Accepted,
+    Duplicate,
+    WrongId,
+    Conflict,
 }
 
-impl QuietDrain {
-    fn new(now: Instant) -> Self {
+#[derive(Debug)]
+struct DumpAttempt {
+    expected_id: Option<u8>,
+    dump_id: Option<u8>,
+    chunks: [Option<[u8; 64]>; 4],
+    acknowledged: bool,
+    invalid: bool,
+}
+
+impl DumpAttempt {
+    fn new(expected_id: Option<u8>) -> Self {
         Self {
-            deadline: now + protocol::SETTLE_TIME,
-            limit: now + OGP_QUIET_DRAIN_MAX,
+            expected_id,
+            dump_id: None,
+            chunks: Default::default(),
+            acknowledged: false,
+            invalid: false,
         }
     }
 
-    fn observe_output(&mut self, output: &protocol::PrintOutput, now: Instant) {
-        if !output.results.is_empty() {
-            self.deadline = (now + protocol::SETTLE_TIME).min(self.limit);
+    fn record(&mut self, chunk: DumpChunk) -> ChunkResult {
+        let expected = self.expected_id.or(self.dump_id);
+        if expected.is_some_and(|id| id != chunk.dump_id) {
+            return ChunkResult::WrongId;
+        }
+        self.dump_id = Some(chunk.dump_id);
+        let index = (chunk.offset / 0x40) as usize;
+        match &self.chunks[index] {
+            Some(values) if values == &chunk.values => ChunkResult::Duplicate,
+            Some(_) => {
+                self.invalid = true;
+                ChunkResult::Conflict
+            }
+            None => {
+                self.chunks[index] = Some(chunk.values);
+                ChunkResult::Accepted
+            }
         }
     }
 
-    fn ready(&self, now: Instant) -> bool {
-        now >= self.deadline
+    fn complete(&self) -> bool {
+        self.acknowledged && !self.invalid && self.chunks.iter().all(Option::is_some)
+    }
+
+    fn snapshot(&self) -> Option<[u8; 256]> {
+        self.complete().then(|| {
+            let mut snapshot = [0; 256];
+            for (index, chunk) in self.chunks.iter().enumerate() {
+                snapshot[index * 64..(index + 1) * 64]
+                    .copy_from_slice(chunk.as_ref().expect("complete dump has every chunk"));
+            }
+            snapshot
+        })
+    }
+
+    fn next_id(&self) -> Option<u8> {
+        self.dump_id
+            .or(self.expected_id)
+            .map(|id| id.wrapping_add(1))
+    }
+}
+
+#[derive(Debug)]
+struct OgpScan {
+    attempt: DumpAttempt,
+    retries: u8,
+}
+
+impl OgpScan {
+    fn new(expected_id: Option<u8>) -> Self {
+        Self {
+            attempt: DumpAttempt::new(expected_id),
+            retries: 0,
+        }
+    }
+
+    fn retry(&mut self) -> bool {
+        if self.retries >= OGP_MAX_RETRIES {
+            return false;
+        }
+        self.retries += 1;
+        self.attempt = DumpAttempt::new(self.attempt.next_id());
+        true
     }
 }
 
@@ -413,21 +484,13 @@ async fn scan_transport(
     }
 }
 
-fn normalize_scan_addresses(uart: bool, addresses: Vec<u8>) -> Result<Vec<u8>, AppError> {
-    if uart && !addresses.is_empty() {
+fn normalize_scan_addresses(_uart: bool, addresses: Vec<u8>) -> Result<Vec<u8>, AppError> {
+    if !addresses.is_empty() {
         return Err(AppError::InvalidConfig(
-            "UART supports full register scans only".to_owned(),
+            "native transports support full register scans only".to_owned(),
         ));
     }
-    Ok(if addresses.is_empty() {
-        (0..=u8::MAX).collect()
-    } else {
-        addresses
-            .into_iter()
-            .collect::<BTreeSet<_>>()
-            .into_iter()
-            .collect()
-    })
+    Ok((0..=u8::MAX).collect())
 }
 
 enum EitherSender {
@@ -752,12 +815,13 @@ async fn run_ogp_actor(
     );
 
     let selected_source = protocol::FRAME_CONTROLLER_ADDRESS + slot;
-    let mut scan: Option<ScanState> = None;
-    let mut pending_scan: Option<Vec<u8>> = None;
+    let mut scan: Option<OgpScan> = None;
+    let mut pending_scan = false;
+    let mut last_dump_id = None;
     let mut print_parser = PrintParser::default();
-    let mut quiet_drain: Option<QuietDrain> = None;
-    let mut settle_deadline: Option<Instant> = None;
+    let mut initial_drain_deadline: Option<Instant> = None;
     let mut ack_deadline: Option<Instant> = None;
+    let mut dump_deadline: Option<Instant> = None;
     let mut scan_deadline: Option<Instant> = None;
     let mut queued_frames = deferred
         .into_iter()
@@ -766,43 +830,78 @@ async fn run_ogp_actor(
 
     loop {
         while let Some(frame) = queued_frames.pop_front() {
-            route_ogp_frame(
+            if let Err(error) = route_ogp_frame(
                 frame,
                 selected_source,
                 generation,
                 &events,
-                &mut stream,
-                &mut scan,
-                &mut print_parser,
-                &mut quiet_drain,
-                &mut settle_deadline,
-                &mut ack_deadline,
-            )
-            .await?;
+                OgpRouteContext {
+                    scan: &mut scan,
+                    print_parser: &mut print_parser,
+                    initial_drain: initial_drain_deadline.is_some(),
+                    last_dump_id: &mut last_dump_id,
+                    ack_deadline: &mut ack_deadline,
+                    dump_deadline: &mut dump_deadline,
+                },
+            ) {
+                send_scan_failure(&events, generation, error, (0..=u8::MAX).collect());
+                return Ok(());
+            }
+            if scan
+                .as_ref()
+                .is_some_and(|active| active.attempt.complete())
+            {
+                publish_ogp_dump(
+                    &events,
+                    generation,
+                    scan.take().expect("scan is active"),
+                    &mut last_dump_id,
+                );
+                ack_deadline = None;
+                dump_deadline = None;
+                scan_deadline = None;
+                print_parser.reset();
+            } else if scan
+                .as_ref()
+                .is_some_and(|active| active.attempt.acknowledged && active.attempt.invalid)
+            {
+                retry_ogp_attempt(
+                    &mut stream,
+                    selected_source,
+                    &mut scan,
+                    &mut ack_deadline,
+                    &mut dump_deadline,
+                )
+                .await?;
+            }
         }
 
         let idle_deadline = || Instant::now() + Duration::from_secs(86_400);
-        let start = quiet_drain
-            .as_ref()
-            .map(|drain| drain.deadline)
-            .unwrap_or_else(idle_deadline);
-        let settle = settle_deadline.unwrap_or_else(idle_deadline);
+        let drain = initial_drain_deadline.unwrap_or_else(idle_deadline);
         let ack = ack_deadline.unwrap_or_else(idle_deadline);
+        let dump = dump_deadline.unwrap_or_else(idle_deadline);
         let total = scan_deadline.unwrap_or_else(idle_deadline);
         tokio::select! {
             _ = cancellation.cancelled() => break,
             control = controls.recv() => match control {
                 None | Some(Control::Stop) => break,
                 Some(Control::Scan(addresses)) => {
-                    if scan.is_some() || pending_scan.is_some() {
+                    if scan.is_some() || pending_scan {
                         send_event(&events, TransportEvent::Error { generation, error: AppError::ScanBusy.payload() });
                         continue;
                     }
                     let addresses = if addresses.is_empty() { (0..=u8::MAX).collect() } else { addresses };
                     send_event(&events, TransportEvent::ScanStarted { generation, addresses: addresses.clone() });
-                    pending_scan = Some(addresses);
-                    quiet_drain = Some(QuietDrain::new(Instant::now()));
+                    pending_scan = true;
                     scan_deadline = Some(Instant::now() + OGP_SCAN_TIMEOUT);
+                    print_parser.reset();
+                    if last_dump_id.is_none() {
+                        initial_drain_deadline = Some(Instant::now() + OGP_INITIAL_DRAIN);
+                    } else {
+                        pending_scan = false;
+                        scan = Some(OgpScan::new(last_dump_id.map(|id| id.wrapping_add(1))));
+                        send_ogp_command(&mut stream, selected_source, &mut ack_deadline, &mut dump_deadline).await?;
+                    }
                 }
             },
             result = stream.read(&mut read_buffer) => {
@@ -821,77 +920,77 @@ async fn run_ogp_actor(
                     }
                 }
             },
-            _ = tokio::time::sleep_until(start), if quiet_drain.is_some() => {
-                debug_assert!(quiet_drain.as_ref().is_some_and(|drain| drain.ready(Instant::now())));
-                quiet_drain = None;
+            _ = tokio::time::sleep_until(drain), if initial_drain_deadline.is_some() => {
+                initial_drain_deadline = None;
                 print_parser.reset();
-                if let Some(addresses) = pending_scan.take() {
-                    scan = Some(ScanState::new(addresses));
-                    send_next_command(&mut stream, selected_source, scan.as_mut().expect("scan was just set"), &mut ack_deadline).await?;
-                }
-            },
-            _ = tokio::time::sleep_until(settle), if settle_deadline.is_some() => {
-                settle_deadline = None;
-                let flushed = print_parser.flush();
-                apply_print_output(flushed, generation, &events, &mut scan);
-                let retry = scan.as_mut().is_some_and(ScanState::retry_missing);
-                if retry {
-                    send_next_command(&mut stream, selected_source, scan.as_mut().unwrap(), &mut ack_deadline).await?;
-                } else if let Some(finished) = scan.take() {
-                    let missing = finished.missing.into_iter().collect();
-                    send_event(&events, TransportEvent::ScanComplete { generation, missing });
-                    scan_deadline = None;
+                if pending_scan {
+                    pending_scan = false;
+                    scan = Some(OgpScan::new(last_dump_id.map(|id| id.wrapping_add(1))));
+                    send_ogp_command(&mut stream, selected_source, &mut ack_deadline, &mut dump_deadline).await?;
                 }
             },
             _ = tokio::time::sleep_until(ack), if ack_deadline.is_some() => {
-                ack_deadline = None;
-                settle_deadline = None;
-                scan_deadline = None;
                 print_parser.reset();
-                if let Some(finished) = scan.take() {
-                    let missing = finished.missing.into_iter().collect();
-                    send_scan_failure(&events, generation, AppError::Timeout("OGP command acknowledgment"), missing);
+                send_scan_failure(&events, generation, AppError::Timeout("OGP command acknowledgment"), (0..=u8::MAX).collect());
+                return Ok(());
+            },
+            _ = tokio::time::sleep_until(dump), if dump_deadline.is_some() => {
+                dump_deadline = None;
+                if scan.as_ref().is_some_and(|active| active.attempt.acknowledged)
+                    && !retry_ogp_attempt(&mut stream, selected_source, &mut scan, &mut ack_deadline, &mut dump_deadline).await?
+                {
+                    scan = None;
+                    scan_deadline = None;
+                    print_parser.reset();
+                    send_scan_failure(&events, generation, AppError::Timeout("OGP register dump"), (0..=u8::MAX).collect());
                 }
             },
             _ = tokio::time::sleep_until(total), if scan_deadline.is_some() => {
                 scan_deadline = None;
-                quiet_drain = None;
-                settle_deadline = None;
+                initial_drain_deadline = None;
                 ack_deadline = None;
+                dump_deadline = None;
                 print_parser.reset();
-                let missing = if let Some(finished) = scan.take() {
-                    finished.missing.into_iter().collect()
-                } else {
-                    pending_scan.take().unwrap_or_default()
-                };
-                send_scan_failure(&events, generation, AppError::Timeout("OGP register scan"), missing);
+                scan = None;
+                pending_scan = false;
+                send_scan_failure(&events, generation, AppError::Timeout("OGP register scan"), (0..=u8::MAX).collect());
             }
         }
     }
     Ok(())
 }
 
-#[allow(clippy::too_many_arguments)]
-async fn route_ogp_frame(
+struct OgpRouteContext<'a> {
+    scan: &'a mut Option<OgpScan>,
+    print_parser: &'a mut PrintParser,
+    initial_drain: bool,
+    last_dump_id: &'a mut Option<u8>,
+    ack_deadline: &'a mut Option<Instant>,
+    dump_deadline: &'a mut Option<Instant>,
+}
+
+fn route_ogp_frame(
     frame: Frame,
     selected_source: u8,
     generation: u64,
     events: &Channel<TransportEvent>,
-    stream: &mut TcpStream,
-    scan: &mut Option<ScanState>,
-    print_parser: &mut PrintParser,
-    quiet_drain: &mut Option<QuietDrain>,
-    settle_deadline: &mut Option<Instant>,
-    ack_deadline: &mut Option<Instant>,
+    context: OgpRouteContext<'_>,
 ) -> Result<(), AppError> {
-    if frame.source != selected_source {
+    let known_scan_type = matches!(
+        frame.message_type,
+        protocol::OGP_PRINT | protocol::OGP_COMMAND_ACK
+    );
+    if frame.source != selected_source
+        || (known_scan_type && !is_selected_scan_frame(&frame, selected_source))
+    {
         send_event(
             events,
             TransportEvent::Log {
                 generation,
                 text: format!(
-                    "[OGP source 0x{:02X} type 0x{:02X}] {} bytes\n",
+                    "[OGP source 0x{:02X} destination 0x{:02X} type 0x{:02X}] {} bytes\n",
                     frame.source,
+                    frame.destination,
                     frame.message_type,
                     frame.content.len()
                 ),
@@ -911,26 +1010,69 @@ async fn route_ogp_frame(
                     },
                 );
             }
-            let output = print_parser.push(&frame.content);
+            let output = context.print_parser.push(&frame.content);
             if output.overflowed {
                 send_event(
                     events,
                     TransportEvent::Log {
                         generation,
                         text: format!(
-                            "[OGP print] unterminated record exceeded {} bytes and was discarded\n",
-                            protocol::MAX_PRINT_RECORD_LEN
+                            "[OGP print] record exceeded {} bytes and was discarded\n",
+                            protocol::PRINT_RECORD_LEN
                         ),
                     },
                 );
             }
-            if let Some(drain) = quiet_drain.as_mut() {
-                drain.observe_output(&output, Instant::now());
+            if output.invalid_records > 0 {
+                send_event(
+                    events,
+                    TransportEvent::Log {
+                        generation,
+                        text: format!(
+                            "[OGP print] discarded {} malformed record(s)\n",
+                            output.invalid_records
+                        ),
+                    },
+                );
             }
-            if output.results.is_empty() && output.unmatched.is_empty() && !raw.is_empty() {
-                return Ok(());
+            for chunk in output.chunks {
+                if context.initial_drain {
+                    *context.last_dump_id = Some(chunk.dump_id);
+                    continue;
+                }
+                let Some(active) = context.scan.as_mut() else {
+                    send_event(
+                        events,
+                        TransportEvent::Log {
+                            generation,
+                            text: format!(
+                                "[OGP] stale dump {:02x} chunk {:02x}\n",
+                                chunk.dump_id, chunk.offset
+                            ),
+                        },
+                    );
+                    continue;
+                };
+                match active.attempt.record(chunk) {
+                    ChunkResult::WrongId => send_event(
+                        events,
+                        TransportEvent::Log {
+                            generation,
+                            text: "[OGP] ignored a chunk with a stale or mixed dump ID\n"
+                                .to_owned(),
+                        },
+                    ),
+                    ChunkResult::Conflict => send_event(
+                        events,
+                        TransportEvent::Log {
+                            generation,
+                            text: "[OGP] conflicting duplicate invalidated the dump attempt\n"
+                                .to_owned(),
+                        },
+                    ),
+                    ChunkResult::Accepted | ChunkResult::Duplicate => {}
+                }
             }
-            apply_print_output(output, generation, events, scan);
         }
         protocol::OGP_COMMAND_ACK => {
             let code = frame.content.first().copied().unwrap_or(1);
@@ -939,7 +1081,7 @@ async fn route_ogp_frame(
                     "OGP command was rejected with code {code}"
                 )));
             }
-            let Some(active) = scan.as_mut() else {
+            let Some(active) = context.scan.as_mut() else {
                 send_event(
                     events,
                     TransportEvent::Log {
@@ -949,7 +1091,7 @@ async fn route_ogp_frame(
                 );
                 return Ok(());
             };
-            if !active.acknowledge() {
+            if active.attempt.acknowledged || context.ack_deadline.is_none() {
                 send_event(
                     events,
                     TransportEvent::Log {
@@ -959,19 +1101,17 @@ async fn route_ogp_frame(
                 );
                 return Ok(());
             }
-            *ack_deadline = None;
-            if active.commands_done() {
-                *settle_deadline = Some(Instant::now() + protocol::SETTLE_TIME);
-            } else {
-                send_next_command(stream, selected_source, active, ack_deadline).await?;
-            }
+            active.attempt.acknowledged = true;
+            *context.ack_deadline = None;
+            *context.dump_deadline = Some(Instant::now() + OGP_DUMP_TIMEOUT);
         }
         _ => send_event(
             events,
             TransportEvent::Log {
                 generation,
                 text: format!(
-                    "[OGP selected card type 0x{:02X}] {} bytes\n",
+                    "[OGP selected card destination 0x{:02X} type 0x{:02X}] {} bytes\n",
+                    frame.destination,
                     frame.message_type,
                     frame.content.len()
                 ),
@@ -981,63 +1121,77 @@ async fn route_ogp_frame(
     Ok(())
 }
 
-fn apply_print_output(
-    output: protocol::PrintOutput,
-    generation: u64,
-    events: &Channel<TransportEvent>,
-    scan: &mut Option<ScanState>,
-) {
-    for result in output.results {
-        let in_scan = is_scoped_register_result(scan, &result);
-        if in_scan {
-            let missing = scan
-                .as_ref()
-                .map(|active| active.missing.iter().copied().collect())
-                .unwrap_or_default();
-            send_event(
-                events,
-                TransportEvent::Registers {
-                    generation,
-                    updates: vec![RegisterUpdate {
-                        address: result.address,
-                        value: result.value,
-                    }],
-                    missing,
-                },
-            );
-        } else {
-            send_event(
-                events,
-                TransportEvent::Log {
-                    generation,
-                    text: format!(
-                        "[OGP] register 0x{:02X} was outside the active scan\n",
-                        result.address
-                    ),
-                },
-            );
-        }
+fn is_selected_scan_frame(frame: &Frame, selected_source: u8) -> bool {
+    if frame.source != selected_source {
+        return false;
+    }
+    match frame.message_type {
+        protocol::OGP_PRINT => frame.destination == protocol::OGP_ADDR_PRINT,
+        protocol::OGP_COMMAND_ACK => frame.destination == protocol::CLIENT_ADDRESS,
+        _ => false,
     }
 }
 
-fn is_scoped_register_result(
-    scan: &mut Option<ScanState>,
-    result: &protocol::RegisterResult,
-) -> bool {
-    scan.as_mut().is_some_and(|active| active.record(result))
-}
-
-async fn send_next_command(
+async fn send_ogp_command(
     stream: &mut TcpStream,
     destination: u8,
-    scan: &mut ScanState,
     ack_deadline: &mut Option<Instant>,
+    dump_deadline: &mut Option<Instant>,
 ) -> Result<(), AppError> {
-    if let Some(address) = scan.next_to_send() {
-        write_frame(stream, &protocol::command_request(destination, address)).await?;
-        *ack_deadline = Some(Instant::now() + ACK_TIMEOUT);
-    }
+    write_frame(stream, &protocol::command_request(destination)).await?;
+    *ack_deadline = Some(Instant::now() + ACK_TIMEOUT);
+    *dump_deadline = None;
     Ok(())
+}
+
+async fn retry_ogp_attempt(
+    stream: &mut TcpStream,
+    destination: u8,
+    scan: &mut Option<OgpScan>,
+    ack_deadline: &mut Option<Instant>,
+    dump_deadline: &mut Option<Instant>,
+) -> Result<bool, AppError> {
+    let Some(active) = scan.as_mut() else {
+        return Ok(false);
+    };
+    if !active.retry() {
+        return Ok(false);
+    }
+    send_ogp_command(stream, destination, ack_deadline, dump_deadline).await?;
+    Ok(true)
+}
+
+fn publish_ogp_dump(
+    events: &Channel<TransportEvent>,
+    generation: u64,
+    scan: OgpScan,
+    last_dump_id: &mut Option<u8>,
+) {
+    let snapshot = scan.attempt.snapshot().expect("published dump is complete");
+    *last_dump_id = scan.attempt.dump_id;
+    let updates = snapshot
+        .into_iter()
+        .enumerate()
+        .map(|(address, value)| RegisterUpdate {
+            address: address as u8,
+            value,
+        })
+        .collect();
+    send_event(
+        events,
+        TransportEvent::Registers {
+            generation,
+            updates,
+            missing: Vec::new(),
+        },
+    );
+    send_event(
+        events,
+        TransportEvent::ScanComplete {
+            generation,
+            missing: Vec::new(),
+        },
+    );
 }
 
 async fn perform_handshake(
@@ -1220,23 +1374,16 @@ mod tests {
     }
 
     #[test]
-    fn uart_scan_requests_are_full_scan_only() {
+    fn native_scan_requests_are_full_scan_only() {
         let full_scan = normalize_scan_addresses(true, Vec::new()).unwrap();
         assert_eq!(full_scan.len(), 256);
         assert_eq!(full_scan[0], 0);
         assert_eq!(full_scan[255], 255);
         assert!(matches!(
             normalize_scan_addresses(true, vec![1, 2]),
-            Err(AppError::InvalidConfig(message)) if message == "UART supports full register scans only"
+            Err(AppError::InvalidConfig(message)) if message == "native transports support full register scans only"
         ));
-    }
-
-    #[test]
-    fn ogp_scan_requests_are_sorted_and_deduplicated() {
-        assert_eq!(
-            normalize_scan_addresses(false, vec![3, 1, 3]).unwrap(),
-            [1, 3]
-        );
+        assert!(normalize_scan_addresses(false, vec![3]).is_err());
     }
 
     #[test]
@@ -1274,35 +1421,98 @@ mod tests {
         ));
     }
 
-    #[test]
-    fn continuous_unmatched_prints_do_not_delay_pending_scan() {
-        let started = Instant::now();
-        let mut drain = QuietDrain::new(started);
-        let initial_deadline = drain.deadline;
-        let mut parser = PrintParser::default();
-
-        for step in 1..=20 {
-            let output = parser.push(b"continuous debug output\0");
-            drain.observe_output(&output, started + Duration::from_millis(step * 100));
+    fn chunk(id: u8, offset: u8, value: u8) -> DumpChunk {
+        DumpChunk {
+            dump_id: id,
+            offset,
+            values: [value; 64],
         }
-
-        assert_eq!(drain.deadline, initial_deadline);
-        assert!(drain.ready(started + protocol::SETTLE_TIME));
     }
 
     #[test]
-    fn stale_register_prints_cannot_extend_quiet_drain_past_limit() {
-        let started = Instant::now();
-        let mut drain = QuietDrain::new(started);
-        let mut parser = PrintParser::default();
-
-        for step in 1..=20 {
-            let output = parser.push(b"Register 0x01 = 0x02\0");
-            drain.observe_output(&output, started + Duration::from_millis(step * 100));
+    fn dump_requires_ack_and_all_reordered_chunks_before_atomic_snapshot() {
+        let mut attempt = DumpAttempt::new(Some(0x42));
+        for (offset, value) in [(0x80, 2), (0, 0), (0xc0, 3), (0x40, 1)] {
+            assert_eq!(
+                attempt.record(chunk(0x42, offset, value)),
+                ChunkResult::Accepted
+            );
         }
+        assert!(!attempt.complete());
+        assert!(attempt.snapshot().is_none());
+        attempt.acknowledged = true;
+        let snapshot = attempt.snapshot().unwrap();
+        assert_eq!(&snapshot[0..64], &[0; 64]);
+        assert_eq!(&snapshot[64..128], &[1; 64]);
+        assert_eq!(&snapshot[128..192], &[2; 64]);
+        assert_eq!(&snapshot[192..256], &[3; 64]);
+    }
 
-        assert_eq!(drain.deadline, started + OGP_QUIET_DRAIN_MAX);
-        assert!(drain.ready(started + OGP_QUIET_DRAIN_MAX));
+    #[test]
+    fn dump_accepts_ack_first_and_identical_duplicate_but_rejects_mixed_or_conflicting_data() {
+        let mut attempt = DumpAttempt::new(Some(9));
+        attempt.acknowledged = true;
+        assert_eq!(attempt.record(chunk(9, 0, 1)), ChunkResult::Accepted);
+        assert_eq!(attempt.record(chunk(9, 0, 1)), ChunkResult::Duplicate);
+        assert_eq!(attempt.record(chunk(8, 0x40, 2)), ChunkResult::WrongId);
+        assert_eq!(attempt.record(chunk(9, 0, 2)), ChunkResult::Conflict);
+        for offset in [0x40, 0x80, 0xc0] {
+            attempt.record(chunk(9, offset, 3));
+        }
+        assert!(!attempt.complete());
+    }
+
+    #[test]
+    fn dump_ids_wrap_and_retries_are_bounded_without_combining_attempts() {
+        let mut scan = OgpScan::new(Some(0xff));
+        scan.attempt.record(chunk(0xff, 0, 1));
+        assert!(scan.retry());
+        assert_eq!(scan.attempt.expected_id, Some(0));
+        assert!(scan.attempt.chunks.iter().all(Option::is_none));
+        scan.attempt.record(chunk(0, 0, 2));
+        assert!(scan.retry());
+        assert_eq!(scan.attempt.expected_id, Some(1));
+        assert!(!scan.retry());
+    }
+
+    #[test]
+    fn scan_frames_require_message_specific_destination_and_selected_source() {
+        let print = Frame {
+            source: 0x15,
+            destination: protocol::OGP_ADDR_PRINT,
+            message_type: protocol::OGP_PRINT,
+            content: Vec::new(),
+        };
+        assert!(is_selected_scan_frame(&print, 0x15));
+        assert!(!is_selected_scan_frame(
+            &Frame {
+                destination: protocol::CLIENT_ADDRESS,
+                ..print.clone()
+            },
+            0x15
+        ));
+
+        let ack = Frame {
+            source: 0x15,
+            destination: protocol::CLIENT_ADDRESS,
+            message_type: protocol::OGP_COMMAND_ACK,
+            content: vec![0],
+        };
+        assert!(is_selected_scan_frame(&ack, 0x15));
+        assert!(!is_selected_scan_frame(
+            &Frame {
+                destination: protocol::OGP_ADDR_PRINT,
+                ..ack.clone()
+            },
+            0x15
+        ));
+        assert!(!is_selected_scan_frame(
+            &Frame {
+                source: 0x14,
+                ..ack
+            },
+            0x15
+        ));
     }
 
     #[test]
@@ -1347,20 +1557,5 @@ mod tests {
             error.to_string(),
             "connection handshake was rejected: return code 0, allow 0x0000, state 0x0002, reason 0x0009"
         );
-    }
-
-    #[test]
-    fn old_prints_are_not_scoped_after_completion_or_before_the_next_issue() {
-        let result = protocol::RegisterResult {
-            address: 4,
-            value: 9,
-        };
-        let mut scan = None;
-        assert!(!is_scoped_register_result(&mut scan, &result));
-
-        scan = Some(ScanState::new([4]));
-        assert!(!is_scoped_register_result(&mut scan, &result));
-        assert_eq!(scan.as_mut().unwrap().next_to_send(), Some(4));
-        assert!(is_scoped_register_result(&mut scan, &result));
     }
 }

@@ -101,7 +101,9 @@ UART sends `r 1 1\r\n` and waits for the existing 16-row register dump format sh
 
 OGP connects to port 5253 by default and performs the `0xFF03` connection handshake. The response source, destination, message type, OID, data length, return code, and 16-bit allow value must be valid before RegMon accepts the connection. Normal connection is the default. Force connection is sent only when selected in the UI and can displace another client.
 
-For each register, OGP sends a NUL-terminated `fpgarr 0xNN` command to the selected slot. The command acknowledgment means only that the command was accepted. Register values are collected separately from NUL-, CR-, or LF-terminated OGP print records. A full scan first drains late output, permits one command without an acknowledgment, retries only missing addresses twice, has a total two-minute deadline, and preserves old values for registers that remain missing.
+OGP sends one exact NUL-terminated `regmon\0` command to the selected slot for each full scan. The card returns four NUL-terminated OGP print records. Each record is `regmon`, a two-digit hexadecimal dump ID, a two-digit hexadecimal offset (`00`, `40`, `80`, or `c0`), and 128 hexadecimal digits for 64 register bytes. The record is 139 bytes including its NUL and has no spaces or newlines. Hexadecimal digits can use either case, but `regmon` must be lowercase.
+
+RegMon accepts chunks in any order and before or after the successful command acknowledgment. It publishes the 256-byte register map atomically only after one dump ID has all four chunks and the acknowledgment is successful. An incomplete acknowledged dump retries the full command at most twice. A rejected or timed-out acknowledgment disconnects safely. Failed scans keep prior values and mark them stale.
 
 The OGP Transport Log keeps unrelated output and messages from other sources. Device discovery through SLP is not implemented; enter the frame host or IP address manually.
 

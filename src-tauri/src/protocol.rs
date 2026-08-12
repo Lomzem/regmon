@@ -1,24 +1,18 @@
-use std::collections::{BTreeSet, VecDeque};
-use std::sync::OnceLock;
-use std::time::Duration;
-
-use regex::Regex;
 use serde::Serialize;
 use thiserror::Error;
 
 pub const SYNC: [u8; 4] = [0xBA, 0xD2, 0xAC, 0xE5];
 pub const HEADER_LEN: usize = 9;
 pub const MAX_CONTENT_LEN: usize = 8192;
-pub const MAX_PRINT_RECORD_LEN: usize = 64 * 1024;
+pub const PRINT_RECORD_LEN: usize = 138;
 pub const CLIENT_ADDRESS: u8 = 0x00;
+pub const OGP_ADDR_PRINT: u8 = 0x01;
 pub const FRAME_CONTROLLER_ADDRESS: u8 = 0x10;
 pub const CONNECT_VERIFY_OID: u16 = 0xFF03;
 pub const SET_PARAM: u8 = 0x4A;
 pub const OGP_PRINT: u8 = 0x00;
 pub const OGP_COMMAND: u8 = 0x44;
 pub const OGP_COMMAND_ACK: u8 = 0xC4;
-pub const SETTLE_TIME: Duration = Duration::from_millis(350);
-pub const MAX_MISSING_RETRIES: u8 = 2;
 pub const SET_PARAM_RESPONSE: u8 = SET_PARAM | 0x80;
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -172,21 +166,20 @@ pub fn parse_connect_verify_response(
     })
 }
 
-pub fn command_request(destination: u8, address: u8) -> Frame {
-    let mut content = format!("fpgarr 0x{address:02X}").into_bytes();
-    content.push(0);
+pub fn command_request(destination: u8) -> Frame {
     Frame {
         source: CLIENT_ADDRESS,
         destination,
         message_type: OGP_COMMAND,
-        content,
+        content: b"regmon\0".to_vec(),
     }
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
-pub struct RegisterResult {
-    pub address: u8,
-    pub value: u8,
+pub struct DumpChunk {
+    pub dump_id: u8,
+    pub offset: u8,
+    pub values: [u8; 64],
 }
 
 #[derive(Debug, Default)]
@@ -199,19 +192,22 @@ impl PrintParser {
     pub fn push(&mut self, bytes: &[u8]) -> PrintOutput {
         let mut output = PrintOutput::default();
         for byte in bytes {
-            if matches!(byte, 0 | b'\r' | b'\n') {
+            if *byte == 0 {
                 if self.discarding_record {
                     self.discarding_record = false;
-                } else if !self.buffer.is_empty() {
+                } else {
                     let bytes = std::mem::take(&mut self.buffer);
-                    self.consume_line(String::from_utf8_lossy(&bytes).into_owned(), &mut output);
+                    match parse_print_record(&bytes) {
+                        Some(chunk) => output.chunks.push(chunk),
+                        None => output.invalid_records += 1,
+                    }
                 }
                 continue;
             }
             if self.discarding_record {
                 continue;
             }
-            if self.buffer.len() == MAX_PRINT_RECORD_LEN {
+            if self.buffer.len() == PRINT_RECORD_LEN {
                 self.buffer.clear();
                 self.discarding_record = true;
                 output.overflowed = true;
@@ -222,113 +218,49 @@ impl PrintParser {
         output
     }
 
-    pub fn flush(&mut self) -> PrintOutput {
-        let mut output = PrintOutput::default();
-        if self.discarding_record {
-            self.discarding_record = false;
-            return output;
-        }
-        if !self.buffer.is_empty() {
-            let bytes = std::mem::take(&mut self.buffer);
-            let line = String::from_utf8_lossy(&bytes).into_owned();
-            self.consume_line(line, &mut output);
-        }
-        output
-    }
-
     pub fn reset(&mut self) {
         self.buffer.clear();
         self.discarding_record = false;
-    }
-
-    fn consume_line(&self, line: String, output: &mut PrintOutput) {
-        static PATTERN: OnceLock<Regex> = OnceLock::new();
-        let pattern = PATTERN.get_or_init(|| {
-            Regex::new(r"(?i)^\s*Register\s+0x([0-9a-f]+)\s*=\s*0x([0-9a-f]+)\s*$")
-                .expect("register pattern is valid")
-        });
-        let Some(captures) = pattern.captures(&line) else {
-            if !line.trim().is_empty() {
-                output.unmatched.push(line);
-            }
-            return;
-        };
-        let address = u16::from_str_radix(&captures[1], 16);
-        let value = u16::from_str_radix(&captures[2], 16);
-        match (address, value) {
-            (Ok(address @ 0..=0xFF), Ok(value @ 0..=0xFF)) => {
-                output.results.push(RegisterResult {
-                    address: address as u8,
-                    value: value as u8,
-                });
-            }
-            _ => output.unmatched.push(line),
-        }
     }
 }
 
 #[derive(Debug, Default, PartialEq, Eq)]
 pub struct PrintOutput {
-    pub results: Vec<RegisterResult>,
-    pub unmatched: Vec<String>,
+    pub chunks: Vec<DumpChunk>,
+    pub invalid_records: usize,
     pub overflowed: bool,
 }
 
-#[derive(Debug)]
-pub struct ScanState {
-    pub missing: BTreeSet<u8>,
-    queue: VecDeque<u8>,
-    issued: BTreeSet<u8>,
-    awaiting_ack: Option<u8>,
-    retries: u8,
+fn parse_hex_byte(bytes: &[u8]) -> Option<u8> {
+    fn digit(byte: u8) -> Option<u8> {
+        match byte {
+            b'0'..=b'9' => Some(byte - b'0'),
+            b'a'..=b'f' => Some(byte - b'a' + 10),
+            b'A'..=b'F' => Some(byte - b'A' + 10),
+            _ => None,
+        }
+    }
+    Some(digit(*bytes.first()?)? << 4 | digit(*bytes.get(1)?)?)
 }
 
-impl ScanState {
-    pub fn new(addresses: impl IntoIterator<Item = u8>) -> Self {
-        let requested = addresses.into_iter().collect::<BTreeSet<_>>();
-        Self {
-            missing: requested.clone(),
-            queue: requested.iter().copied().collect(),
-            issued: BTreeSet::new(),
-            awaiting_ack: None,
-            retries: 0,
-        }
+fn parse_print_record(record: &[u8]) -> Option<DumpChunk> {
+    if record.len() != PRINT_RECORD_LEN || &record[..6] != b"regmon" {
+        return None;
     }
-
-    pub fn next_to_send(&mut self) -> Option<u8> {
-        if self.awaiting_ack.is_some() {
-            return None;
-        }
-        let address = self.queue.pop_front()?;
-        self.issued.insert(address);
-        self.awaiting_ack = Some(address);
-        Some(address)
+    let dump_id = parse_hex_byte(&record[6..8])?;
+    let offset = parse_hex_byte(&record[8..10])?;
+    if !matches!(offset, 0x00 | 0x40 | 0x80 | 0xc0) {
+        return None;
     }
-
-    pub fn acknowledge(&mut self) -> bool {
-        self.awaiting_ack.take().is_some()
+    let mut values = [0; 64];
+    for (index, value) in values.iter_mut().enumerate() {
+        *value = parse_hex_byte(&record[10 + index * 2..12 + index * 2])?;
     }
-
-    pub fn record(&mut self, result: &RegisterResult) -> bool {
-        if !self.issued.contains(&result.address) {
-            return false;
-        }
-        self.missing.remove(&result.address);
-        true
-    }
-
-    pub fn commands_done(&self) -> bool {
-        self.queue.is_empty() && self.awaiting_ack.is_none()
-    }
-
-    pub fn retry_missing(&mut self) -> bool {
-        if self.missing.is_empty() || self.retries >= MAX_MISSING_RETRIES {
-            return false;
-        }
-        self.retries += 1;
-        self.queue = self.missing.iter().copied().collect();
-        true
-    }
+    Some(DumpChunk {
+        dump_id,
+        offset,
+        values,
+    })
 }
 
 #[derive(Debug, Clone, Serialize, Error)]
@@ -392,7 +324,7 @@ mod tests {
             ]
             .concat()
         );
-        assert_eq!(command_request(0x15, 0xA7).content, b"fpgarr 0xA7\0");
+        assert_eq!(command_request(0x15).content, b"regmon\0");
     }
 
     fn connect_response(content: &[u8]) -> Frame {
@@ -450,82 +382,77 @@ mod tests {
         ));
     }
 
-    #[test]
-    fn print_parser_handles_splits_duplicates_and_unrelated_lines() {
-        let mut parser = PrintParser::default();
-        assert!(parser.push(b"Regis").results.is_empty());
-        let output = parser.push(b"ter 0x0a = 0x1F\r\nnoise\nRegister 0x0A = 0x20\n");
-        assert_eq!(output.results.len(), 2);
-        assert_eq!(
-            output.results[1],
-            RegisterResult {
-                address: 10,
-                value: 32
-            }
-        );
-        assert_eq!(output.unmatched, ["noise"]);
-    }
-
-    #[test]
-    fn print_parser_uses_nul_boundaries_for_fragmented_and_coalesced_records() {
-        let mut parser = PrintParser::default();
-        assert!(parser.push(b"Register 0x01 =").results.is_empty());
-        let output = parser.push(b" 0x02\0Register 0x03 = 0x04\0noise\0");
-        assert_eq!(
-            output.results,
-            [
-                RegisterResult {
-                    address: 1,
-                    value: 2
-                },
-                RegisterResult {
-                    address: 3,
-                    value: 4
+    fn record(id: u8, offset: u8, upper: bool) -> Vec<u8> {
+        let mut record = format!("regmon{id:02x}{offset:02x}").into_bytes();
+        for value in 0..64u8 {
+            record.extend_from_slice(
+                if upper {
+                    format!("{value:02X}")
+                } else {
+                    format!("{value:02x}")
                 }
-            ]
-        );
-        assert_eq!(output.unmatched, ["noise"]);
+                .as_bytes(),
+            );
+        }
+        record.push(0);
+        record
     }
 
     #[test]
-    fn print_parser_bounds_unterminated_records_and_recovers_at_boundary() {
+    fn print_parser_accepts_all_offsets_and_hex_cases() {
         let mut parser = PrintParser::default();
-        let output = parser.push(&vec![b'x'; MAX_PRINT_RECORD_LEN + 1]);
+        let bytes = [
+            record(0xaf, 0x80, true),
+            record(0xaf, 0x00, false),
+            record(0xaf, 0xc0, true),
+            record(0xaf, 0x40, false),
+        ]
+        .concat();
+        let output = parser.push(&bytes);
+        assert_eq!(output.chunks.len(), 4);
+        assert_eq!(output.chunks[0].dump_id, 0xaf);
+        assert_eq!(output.chunks[0].values[63], 63);
+        assert_eq!(
+            output
+                .chunks
+                .iter()
+                .map(|chunk| chunk.offset)
+                .collect::<Vec<_>>(),
+            [0x80, 0, 0xc0, 0x40]
+        );
+    }
+
+    #[test]
+    fn print_parser_uses_strict_nul_boundaries_with_fragmented_records() {
+        let mut parser = PrintParser::default();
+        let record = record(7, 0x40, false);
+        assert!(parser.push(&record[..51]).chunks.is_empty());
+        assert_eq!(parser.push(&record[51..]).chunks.len(), 1);
+        assert_eq!(parser.push(b"regmon0700\n\0").invalid_records, 1);
+    }
+
+    #[test]
+    fn print_parser_rejects_invalid_schema_and_recovers_after_oversize() {
+        let mut parser = PrintParser::default();
+        let mut invalid = Vec::new();
+        for mutation in [0, 6, 8, 10] {
+            let mut item = record(1, 0, false);
+            item[mutation] = b'x';
+            invalid.extend(item);
+        }
+        let mut bad_offset = record(1, 0, false);
+        bad_offset[8..10].copy_from_slice(b"20");
+        invalid.extend(bad_offset);
+        let mut short = record(1, 0, false);
+        short.remove(20);
+        invalid.extend(short);
+        assert_eq!(parser.push(&invalid).invalid_records, 6);
+
+        let output = parser.push(&[b'x'; PRINT_RECORD_LEN + 1]);
         assert!(output.overflowed);
         assert!(parser.buffer.is_empty());
-
-        let output = parser.push(b"\0Register 0x01 = 0x02\0");
-        assert_eq!(
-            output.results,
-            [RegisterResult {
-                address: 1,
-                value: 2
-            }]
-        );
+        let output = parser.push(&[b"\0".as_slice(), record(2, 0xc0, false).as_slice()].concat());
+        assert_eq!(output.chunks.len(), 1);
         assert!(!output.overflowed);
-    }
-
-    #[test]
-    fn scan_accepts_print_before_or_after_ack_and_retries_only_missing() {
-        let mut scan = ScanState::new([1, 2]);
-        assert!(!scan.record(&RegisterResult {
-            address: 2,
-            value: 8
-        }));
-        assert_eq!(scan.next_to_send(), Some(1));
-        assert!(scan.record(&RegisterResult {
-            address: 1,
-            value: 9
-        }));
-        assert!(scan.record(&RegisterResult {
-            address: 1,
-            value: 10
-        }));
-        assert!(scan.acknowledge());
-        assert_eq!(scan.next_to_send(), Some(2));
-        assert!(scan.acknowledge());
-        assert!(scan.commands_done());
-        assert!(scan.retry_missing());
-        assert_eq!(scan.next_to_send(), Some(2));
     }
 }
