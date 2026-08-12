@@ -28,7 +28,7 @@
 	<p class="text-xs text-muted-foreground">
 		{view.rawLog.length.toLocaleString()} characters received
 	</p>
-	<div class="flex flex-wrap items-center justify-end gap-1">
+	<div class="flex items-center gap-1">
 		<span
 			class={[
 				'mr-1 text-[11px]',
@@ -43,18 +43,11 @@
 					? 'Copy failed'
 					: ''}
 		</span>
-		<Button
-			class="min-h-10 sm:min-h-8"
-			variant="ghost"
-			size="sm"
-			onclick={copyLog}
-			disabled={!view.rawLog}
-		>
+		<Button variant="ghost" size="sm" onclick={copyLog} disabled={!view.rawLog}>
 			{#if copyStatus === 'success'}<Check /> Copied{:else if copyStatus === 'error'}<AlertTriangle
 				/> Retry{:else}<Copy /> Copy{/if}
 		</Button>
 		<Button
-			class="min-h-10 sm:min-h-8"
 			variant="ghost"
 			size="sm"
 			onclick={() => monitor.dispatch({ type: 'clear-log' })}

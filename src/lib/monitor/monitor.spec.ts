@@ -20,6 +20,7 @@ interface MonitorHarness {
 	nativeSession: NativeSessionGate;
 	onNativeEvent(event: NativeTransportEvent): void;
 	poll(): void;
+	schedulePoll(delay: number): void;
 }
 
 function browserPollingMonitor(readText: SerialConnection['readText']): {
@@ -86,6 +87,33 @@ describe('monitor state policies', () => {
 		expect(pollDelayAfterResult(true, 1_000, false)).toBe(0);
 		expect(pollDelayAfterResult(false, 1_000, false)).toBe(1_000);
 		expect(pollDelayAfterResult(true, 1_000, true)).toBe(1_000);
+	});
+
+	it('reschedules an idle connected poll when the interval changes', () => {
+		vi.useFakeTimers();
+		const monitor = new BrowserMonitor();
+		const harness = monitor as unknown as MonitorHarness;
+		const poll = vi.fn();
+		Object.assign(harness, {
+			poll,
+			_view: {
+				...monitor.view,
+				mode: 'ogp',
+				status: 'connected',
+				paused: false,
+				polling: false,
+				intervalMs: 10_000
+			}
+		});
+		harness.schedulePoll(10_000);
+
+		monitor.dispatch({ type: 'set-interval', intervalMs: 1_000 });
+		expect(vi.getTimerCount()).toBe(1);
+		vi.advanceTimersByTime(999);
+		expect(poll).not.toHaveBeenCalled();
+		vi.advanceTimersByTime(1);
+		expect(poll).toHaveBeenCalledOnce();
+		monitor.close();
 	});
 
 	it('keeps one interval retry for error then scanComplete with a queued refresh', () => {

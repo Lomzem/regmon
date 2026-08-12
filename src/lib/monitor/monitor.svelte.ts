@@ -304,8 +304,18 @@ export class BrowserMonitor {
 					const intervalMs = supported.some((interval) => interval === action.intervalMs)
 						? action.intervalMs
 						: fallback;
+					const intervalChanged = intervalMs !== this._view.intervalMs;
 					this.intervals[this._view.mode] = intervalMs;
 					this.patch({ intervalMs });
+					if (
+						intervalChanged &&
+						this.pollTimer !== undefined &&
+						this._view.status === 'connected' &&
+						!this._view.paused &&
+						!this._view.polling
+					) {
+						this.schedulePoll(intervalMs);
+					}
 				}
 				this.persist();
 				break;
@@ -649,7 +659,10 @@ export class BrowserMonitor {
 	private schedulePoll(delay: number): void {
 		this.clearPollTimer();
 		if (this._view.status !== 'connected' || this._view.paused || this.closed) return;
-		this.pollTimer = setTimeout(() => this.poll(), delay);
+		this.pollTimer = setTimeout(() => {
+			this.pollTimer = undefined;
+			this.poll();
+		}, delay);
 	}
 
 	private clearPollTimer(): void {

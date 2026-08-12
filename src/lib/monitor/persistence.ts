@@ -9,7 +9,7 @@ import {
 const STORAGE_KEY = 'regmon.monitor.v1';
 
 export const UART_POLL_INTERVALS = [250, 500, 1_000, 2_000, 5_000] as const;
-export const OGP_POLL_INTERVALS = [5_000, 10_000, 30_000, 60_000] as const;
+export const OGP_POLL_INTERVALS = [1_000, 5_000, 10_000, 30_000, 60_000] as const;
 export const DEFAULT_UART_POLL_INTERVAL_MS = 1_000;
 export const DEFAULT_OGP_POLL_INTERVAL_MS = 10_000;
 

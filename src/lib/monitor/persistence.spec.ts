@@ -71,6 +71,11 @@ describe('normalizeSettings', () => {
 		expect(invalid.uartIntervalMs).toBe(DEFAULT_UART_POLL_INTERVAL_MS);
 	});
 
+	it('retains the supported 1000 ms OGP interval', () => {
+		expect(normalizeSettings({ mode: 'ogp', ogpIntervalMs: 1_000 }).ogpIntervalMs).toBe(1_000);
+		expect(normalizeSettings({ mode: 'ogp', intervalMs: 1_000 }).ogpIntervalMs).toBe(1_000);
+	});
+
 	it('retains a valid persisted register map', () => {
 		expect(normalizeSettings({ registerMap }).registerMap).toEqual(registerMap);
 	});

@@ -3,7 +3,7 @@
 	import Star from '@lucide/svelte/icons/star';
 	import Upload from '@lucide/svelte/icons/upload';
 	import { Badge } from '$lib/components/ui/badge';
-	import { Button } from '$lib/components/ui/button';
+	import { Button, buttonVariants } from '$lib/components/ui/button';
 	import { ButtonGroup } from '$lib/components/ui/button-group';
 	import { ScrollArea } from '$lib/components/ui/scroll-area';
 	import { Separator } from '$lib/components/ui/separator';
@@ -27,7 +27,6 @@
 	let staleAddresses = $derived(new Set(view.missingAddresses));
 	let stale = $derived(address !== null && isStaleAddress(address, staleAddresses));
 	let base = $state<'hex' | 'decimal' | 'binary'>('hex');
-	let rdlFileInput = $state<HTMLInputElement | null>(null);
 	let decoded = $derived(
 		address === null || !view.registerMap
 			? undefined
@@ -77,14 +76,12 @@
 		if (!open) monitor.dispatch({ type: 'select-address', address: null });
 	}}
 >
-	<DialogContent
-		class="max-h-[calc(100vh-1rem)] overflow-hidden sm:max-h-[calc(100vh-2rem)] sm:max-w-4xl"
-	>
+	<DialogContent class="max-h-[calc(100vh-2rem)] overflow-hidden sm:max-w-4xl">
 		<DialogHeader
 			class="border-b pb-4 sm:grid sm:grid-cols-[minmax(0,1fr)_auto] sm:gap-x-4 sm:pr-10"
 		>
 			<div class="space-y-2">
-				<DialogTitle class="flex flex-wrap items-center gap-2 font-sans">
+				<DialogTitle class="flex items-center gap-2 font-sans">
 					<Cpu class="text-primary" /> Register {address === null ? '--' : `0x${hex(address)}`}
 					{#if stale}<Badge
 							class="border-amber-500/50 text-amber-700 dark:text-amber-300"
@@ -98,7 +95,7 @@
 				>
 			</div>
 			<Button
-				class="min-h-11 w-full sm:w-52 sm:self-stretch"
+				class="w-full sm:w-52 sm:self-stretch"
 				variant={watched ? 'secondary' : 'outline'}
 				onclick={toggleWatchlist}
 			>
@@ -108,23 +105,14 @@
 		</DialogHeader>
 
 		<div class="space-y-6">
-			<div
-				class={[
-					'flex flex-wrap items-center justify-between gap-2 rounded-md border px-3 py-2 text-xs',
-					stale
-						? 'border-amber-500/50 bg-amber-500/10 text-amber-800 dark:text-amber-200'
-						: 'border-border bg-muted/30 text-muted-foreground'
-				]}
-			>
-				<span
-					>{stale
-						? 'Previous value retained; this address did not respond in the last scan.'
-						: 'Value is current for the latest completed response.'}</span
+			{#if stale}<div
+					class="flex flex-wrap items-center justify-between gap-2 rounded-md border border-amber-500/50 bg-amber-500/10 px-3 py-2 text-xs text-amber-800 dark:text-amber-200"
 				>
-				<span class="font-mono text-[10px]"
-					>{view.snapshotSource ?? 'No source'} · {formatUpdateTime(view.snapshotAt)}</span
-				>
-			</div>
+					<span>Previous value retained; no response in the last scan.</span>
+					<span class="font-mono text-[10px]"
+						>{view.snapshotSource ?? 'No source'} · {formatUpdateTime(view.snapshotAt)}</span
+					>
+				</div>{/if}
 			{#if decoded}
 				<section class="space-y-3">
 					<h2 class="font-sans text-lg font-semibold">Decoded Fields</h2>
@@ -173,20 +161,18 @@
 				<div class="flex items-center justify-between gap-4 rounded-lg border border-dashed p-5">
 					<p class="text-sm text-muted-foreground">Load a SystemRDL file to decode this address.</p>
 					<input
-						bind:this={rdlFileInput}
+						id="inspector-rdl-file"
 						class="sr-only"
 						type="file"
 						accept=".rdl,.systemrdl,text/plain"
 						onchange={loadRdlFile}
 					/>
-					<Button
-						class="min-h-10 sm:min-h-8"
-						variant="outline"
-						size="sm"
-						onclick={() => rdlFileInput?.click()}
+					<label
+						for="inspector-rdl-file"
+						class={buttonVariants({ variant: 'outline', size: 'sm' })}
 					>
 						<Upload /> Choose .rdl File
-					</Button>
+					</label>
 				</div>
 			{/if}
 
@@ -200,7 +186,7 @@
 					<ButtonGroup aria-label="Register value base">
 						{#each Object.entries(baseLabels) as [option, label] (option)}
 							<Button
-								class="min-h-10 text-[11px] sm:min-h-8"
+								class="text-[11px]"
 								size="sm"
 								variant={base === option ? 'default' : 'outline'}
 								onclick={() => (base = option as typeof base)}

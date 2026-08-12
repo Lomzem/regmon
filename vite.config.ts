@@ -3,6 +3,8 @@ import { defineConfig } from 'vitest/config';
 import { playwright } from '@vitest/browser-playwright';
 import adapter from '@sveltejs/adapter-static';
 import { sveltekit } from '@sveltejs/kit/vite';
+import { fileURLToPath } from 'node:url';
+import { searchForWorkspaceRoot } from 'vite';
 
 export default defineConfig({
 	plugins: [
@@ -23,6 +25,14 @@ export default defineConfig({
 		assetsInlineLimit: Infinity
 	},
 	server: {
+		port: 1420,
+		strictPort: true,
+		fs: {
+			allow: [
+				searchForWorkspaceRoot(process.cwd()),
+				fileURLToPath(new URL('./examples', import.meta.url))
+			]
+		},
 		watch: {
 			ignored: ['**/src-tauri/**']
 		}

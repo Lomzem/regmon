@@ -46,6 +46,16 @@ Start the desktop application:
 bun run desktop:dev
 ```
 
+### Mock OpenGear Device
+
+Start a local TCP/OGP device for desktop development:
+
+```sh
+bun run mock:ogp
+```
+
+Connect RegMon to host `127.0.0.1`, port `5253`, and slot `1`. The mock accepts normal or force connection handshakes and returns the register values from `examples/example_output.txt` for each scan. Use `bun run mock:ogp -- --help` for address, slot, dump ordering, and incomplete-dump options.
+
 ## Distribution Builds
 
 ### Containerized Docker Release

@@ -20,10 +20,8 @@
 	/>
 </svelte:head>
 
-<main class="min-h-screen overflow-x-hidden bg-background text-foreground selection:bg-primary/30">
-	<div
-		class="mx-auto flex min-h-screen w-full max-w-7xl min-w-0 flex-col gap-4 px-3 py-4 sm:px-6 sm:py-5 lg:py-8"
-	>
+<main class="min-h-screen bg-background text-foreground selection:bg-primary/30">
+	<div class="mx-auto flex min-h-screen w-full max-w-7xl flex-col gap-4 px-4 py-5 sm:px-6 lg:py-8">
 		<ConnectionToolbar />
 		<RegisterWorkspace />
 		<RegisterInspector />

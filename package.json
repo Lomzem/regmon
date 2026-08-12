@@ -14,6 +14,7 @@
 		"format": "prettier --write .",
 		"test:unit": "vitest",
 		"test": "bun run test:unit -- --run",
+		"mock:ogp": "bun run scripts/mock-ogp-device.mjs",
 		"tauri": "tauri",
 		"desktop:dev": "tauri dev",
 		"desktop:build": "tauri build"
