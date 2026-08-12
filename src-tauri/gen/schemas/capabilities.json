@@ -1,0 +1,1 @@
+{"main":{"identifier":"main","description":"Allow the bundled main window to use only RegMon transport commands.","local":true,"windows":["main"],"permissions":["core:default","transport"]}}
